@@ -1,0 +1,5 @@
+{
+  "name": "DebateFlow - Podcast Script Builder",
+  "description": "Transforms raw text scripts into dynamic, paced, and segmented podcast debate transcripts using Gemini AI.",
+  "requestFramePermissions": []
+}
