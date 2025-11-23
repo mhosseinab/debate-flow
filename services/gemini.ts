@@ -1,5 +1,4 @@
-
-import { GoogleGenAI, Modality } from "@google/genai";
+import { GoogleGenAI } from "@google/genai";
 import { PodcastConfig, Logger } from "../types";
 import { cleanTranscript, parseTranscriptToSegments, buildSafeChunks } from "../lib/utils";
 import { generateSilence, decodeBase64Audio, concatenateBuffers } from "../lib/audioUtils";
@@ -92,11 +91,13 @@ export const generatePodcastAudio = async (
 
     const segments = parseTranscriptToSegments(cleaned, config.speaker1Name.toUpperCase());
     
-    // Chunk size reduced slightly to ensure reliability
-    const chunks = buildSafeChunks(segments, 2000);
+    // Chunk size drastically reduced to 600 chars to avoid 500 Internal Errors
+    const chunks = buildSafeChunks(segments, 600);
 
     // Generate the Acting Guide System Prompt
     const audioSystemPrompt = buildAudioSystemPrompt(config);
+
+    let successCount = 0;
 
     for (let i = 0; i < chunks.length; i++) {
         if (onProgress) onProgress(i + 1, chunks.length);
@@ -112,34 +113,53 @@ export const generatePodcastAudio = async (
         const prompt = buildAudioPrompt(ttsInput, config);
         const logId = log ? log('REQUEST', 'AUDIO', `SYSTEM: ${audioSystemPrompt}\n\nUSER: ${prompt}`) : undefined;
 
-        try {
-            const res = await getAI().models.generateContent({
-                model: "gemini-2.5-flash-preview-tts",
-                contents: [{ parts: [{ text: prompt }] }],
-                config: {
-                    systemInstruction: audioSystemPrompt,
-                    responseModalities: [Modality.AUDIO],
-                    speechConfig: {
-                        multiSpeakerVoiceConfig: {
-                            speakerVoiceConfigs: [
-                                { speaker: config.speaker1Name, voiceConfig: { prebuiltVoiceConfig: { voiceName: config.speaker1Voice } } },
-                                { speaker: config.speaker2Name, voiceConfig: { prebuiltVoiceConfig: { voiceName: config.speaker2Voice } } }
-                            ]
+        let attempt = 0;
+        let chunkSuccess = false;
+
+        while (attempt < 3 && !chunkSuccess) {
+            attempt++;
+            try {
+                const res = await getAI().models.generateContent({
+                    model: "gemini-2.5-flash-preview-tts",
+                    contents: [{ parts: [{ text: prompt }] }],
+                    config: {
+                        systemInstruction: audioSystemPrompt,
+                        // Use string literal 'AUDIO' for experimental endpoint stability
+                        responseModalities: ['AUDIO'], 
+                        speechConfig: {
+                            multiSpeakerVoiceConfig: {
+                                speakerVoiceConfigs: [
+                                    { speaker: config.speaker1Name, voiceConfig: { prebuiltVoiceConfig: { voiceName: config.speaker1Voice } } },
+                                    { speaker: config.speaker2Name, voiceConfig: { prebuiltVoiceConfig: { voiceName: config.speaker2Voice } } }
+                                ]
+                            }
                         }
                     }
-                }
-            });
+                });
 
-            const base64 = res.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-            if (base64) {
-                buffers.push(await decodeBase64Audio(base64, ctx));
-                if (log) log('RESPONSE', 'AUDIO', prompt, `(Chunk ${i+1}/${chunks.length}) Success [${Math.round(base64.length/1024)}KB]`, logId);
-            } else {
-                if (log) log('ERROR', 'AUDIO', prompt, `(Chunk ${i+1}/${chunks.length}) Failed - No audio data`, logId);
+                const base64 = res.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+                if (base64) {
+                    buffers.push(await decodeBase64Audio(base64, ctx));
+                    if (log) log('RESPONSE', 'AUDIO', prompt, `(Chunk ${i+1}/${chunks.length}) Success [${Math.round(base64.length/1024)}KB]`, logId);
+                    chunkSuccess = true;
+                    successCount++;
+                } else {
+                    throw new Error("No audio data returned");
+                }
+            } catch (e: any) { 
+                const isInternal = e.message.includes("500") || e.message.includes("Internal");
+                if (log) log('ERROR', 'AUDIO', prompt, `(Chunk ${i+1}/${chunks.length}) Attempt ${attempt} Failed: ${e.message}`, logId);
+                
+                if (attempt < 3) {
+                    // Backoff: 1s, 2s, 3s
+                    await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+                }
             }
-        } catch (e: any) { 
-            if (log) log('ERROR', 'AUDIO', prompt, `(Chunk ${i+1}/${chunks.length}) ERROR: ${e.message}`, logId);
         }
+    }
+
+    if (successCount === 0) {
+        throw new Error("Audio generation failed completely. Please try again with a shorter script or different tone.");
     }
 
     buffers.push(generateSilence(0.5, ctx));

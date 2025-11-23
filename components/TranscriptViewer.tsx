@@ -1,4 +1,3 @@
-
 import React, { useRef, useEffect, useState } from 'react';
 import { Copy, Check, FileText, Eye, Mic2 } from 'lucide-react';
 import { PodcastConfig, AudioProgress, Logger } from '../types';
@@ -42,13 +41,22 @@ const TranscriptViewer: React.FC<Props> = ({ content, isGenerating, config, onLo
   };
 
   const generateAudio = async () => {
+      // RESET STATE IMMEDIATELY
       setLoadingAudio(true);
+      setBlobUrl(null);
+      setProgress(null);
+      
       try {
           const buffer = await generatePodcastAudio(content, config, (c, t) => setProgress({ current: c, total: t }), onLog);
           const blob = bufferToWavBlob(buffer);
           setBlobUrl(URL.createObjectURL(blob));
-      } catch (e) { console.error(e); alert("Audio generation failed."); } 
-      finally { setLoadingAudio(false); }
+      } catch (e: any) { 
+          console.error(e); 
+          alert(`Audio generation failed: ${e.message}`);
+          setProgress(null);
+      } finally { 
+          setLoadingAudio(false); 
+      }
   };
 
   const lines = content.split('\n').filter(l => l.trim());
