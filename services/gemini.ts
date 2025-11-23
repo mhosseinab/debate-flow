@@ -1,3 +1,4 @@
+
 import { GoogleGenAI } from "@google/genai";
 import { PodcastConfig, Logger } from "../types";
 import { cleanTranscript, parseTranscriptToSegments, buildSafeChunks } from "../lib/utils";
@@ -120,7 +121,6 @@ export const generatePodcastAudio = async (
                     model: "gemini-2.5-flash-preview-tts",
                     contents: [{ parts: [{ text: prompt }] }],
                     config: {
-                        // REMOVED systemInstruction to fix 500 Errors
                         // Use string literal 'AUDIO' for experimental endpoint stability
                         responseModalities: ['AUDIO'], 
                         speechConfig: {

@@ -2,67 +2,73 @@
 import { PodcastConfig } from "../types";
 
 export const buildSystemPrompt = (config: PodcastConfig) => `
-You are an AI-powered **${config.duration}-Minute Podcast Builder**.
+[TASK]
+You are an expert Podcast Script Architect. Your goal is to transform the provided source text into a ${config.duration}-minute audio script.
 
-**EPISODE CONFIG:**
-* Name: ${config.podcastName}
-* Tone: ${config.tone}
-* Language: ${config.language} (Output strictly in this language)
-* Pacing: ${config.pacing}
-* Balance: ${config.speakerBalance}
-* Vocab: ${config.vocabularyLevel}
+[CONFIG]
+Name: ${config.podcastName}
+Tone: ${config.tone}
+Language: ${config.language} (Output strictly in this language)
+Pacing: ${config.pacing}
+Balance: ${config.speakerBalance}
+Vocab: ${config.vocabularyLevel}
 
-**SPEAKERS:**
-1. **${config.speaker1Name.toUpperCase()}** (${config.speaker1Gender}) - Host
-2. **${config.speaker2Name.toUpperCase()}** (${config.speaker2Gender}) - Guest
+[SPEAKERS]
+Speaker 1 (Host): **[${config.speaker1Name.toUpperCase()}]** (${config.speaker1Gender})
+Speaker 2 (Guest): **[${config.speaker2Name.toUpperCase()}]** (${config.speaker2Gender})
 
-**CREDIBILITY & PERSONA:**
-* **NO FAKE EXPERTISE:** Do not refer to the speakers as "experts", "gurus", or "leading authorities" unless the source text explicitly says so.
-* **PERSONA:** Act as enthusiastic "Commentators", "Evangelists", or "Curious Analysts".
-* **CLAIMS:** Stick strictly to the provided source text. Do not hallucinate facts.
-* **FALLACIES:** If 'Critical Analysis' is enabled, actively point out gaps or logical leaps in the source material.
+[RULES]
+1. **CREDIBILITY**: Do NOT call speakers "experts" unless the source supports it. Act as enthusiastic commentators/analysts.
+2. **ACCURACY**: Stick strictly to source facts. Do not hallucinate.
+3. **CRITICAL ANALYSIS**: ${config.criticalAnalysis ? "Enabled. Actively point out logical fallacies or gaps in the source." : "Disabled. Maintain a constructive flow."}
+4. **FORMAT**: Use \`---\` for segment breaks. Use \`[ACTION: ...]\` for non-verbal sounds.
 
-**INSTRUCTIONS:**
-1. **Sound:** Use [ACTION: <Desc>] for music/sfx.
-   - Intro: [ACTION: Theme music fades in]
-   - Breaks: [ACTION: ${config.musicGenre} Jingle]
-2. **Format:**
-   ${config.generateShowNotes ? "Start with '### SHOW NOTES' (Title, Summary, Takeaways)." : ""}
-   Begin with Intro (Welcome to ${config.podcastName}).
-   End with Conclusion (${config.conclusionStyle}).
-   ${config.generateViralClip ? "Append '### VIRAL CLIP SCRIPT' at end." : ""}
-   Use \`---\` for segment breaks.
+[STRUCTURE]
+${config.generateShowNotes ? "1. Start with '### SHOW NOTES' (Title, Summary, Takeaways)." : ""}
+2. Intro: Start with [ACTION: Theme music fades in] and "Welcome to ${config.podcastName}...".
+3. Breaks: Insert [ACTION: ${config.musicGenre} Jingle] at segment transitions.
+4. Outro: End with ${config.conclusionStyle}.
+${config.generateViralClip ? "5. Append '### VIRAL CLIP SCRIPT' (60s standalone hook) at the very end." : ""}
 
-**OUTPUT:**
-Strictly use speaker names: **[${config.speaker1Name.toUpperCase()}]** and **[${config.speaker2Name.toUpperCase()}]**.
-Wrap non-spoken actions in [ACTION: ...].
+[OUTPUT_FORMAT]
+Strictly use these speaker tags at the start of every turn:
+**[${config.speaker1Name.toUpperCase()}]**
+**[${config.speaker2Name.toUpperCase()}]**
 
-${config.customPrompt ? `\n**ADDITIONAL USER INSTRUCTIONS:**\n${config.customPrompt}` : ""}
+${config.customPrompt ? `[USER_OVERRIDE]\n${config.customPrompt}` : ""}
 `;
 
 export const buildNamingPrompt = (script: string, config: PodcastConfig) => `
-Generate a creative ${config.tone} podcast name in ${config.language} based on this text. 
-Tone: ${config.tone}. 
-Audience: ${config.audience}.
-Max 5 words. No quotes. 
-Text: ${script.substring(0, 1000)}
+[TASK]
+Generate a creative podcast name.
+
+[CONFIG]
+Tone: ${config.tone}
+Audience: ${config.audience}
+Language: ${config.language}
+
+[CONSTRAINTS]
+- Max 5 words.
+- No quotation marks.
+- Return ONLY the name.
+
+[CONTEXT]
+${script.substring(0, 1000)}
 `;
 
 export const buildAudioPrompt = (chunkText: string, config: PodcastConfig) => `
-Generate the audio for the following podcast dialogue.
+[TASK]
+Generate audio for the dialogue below.
 
-**PERFORMANCE GUIDELINES:**
-* **Tone:** ${config.tone}
-* **Pacing:** ${config.pacing}
-* **Audience:** ${config.audience}
-* **Language:** ${config.language}
+[CONFIG]
+Tone: ${config.tone}
+Language: ${config.language} 
+Pacing: ${config.pacing}
 
-**CRITICAL INSTRUCTIONS:**
-1. Speak naturally with appropriate emotional inflection matching the Tone.
-2. **DO NOT** read the speaker names (e.g., "Alex:") out loud.
-3. **DO NOT** read stage directions or brackets.
-4. Only speak the dialogue text.
+[ROLES]
+Speaker 1: ${config.speaker1Name}
+Speaker 2: ${config.speaker2Name}
 
-**DIALOGUE:**
+[DIALOGUE]
 ${chunkText}
 `;
