@@ -49,25 +49,20 @@ Text: ${script.substring(0, 1000)}
 `;
 
 export const buildAudioPrompt = (chunkText: string, config: PodcastConfig) => `
-${chunkText}
-`;
-
-export const buildAudioSystemPrompt = (config: PodcastConfig) => `
-You are a voice acting director. Generate the audio for the following podcast dialogue.
+Generate the audio for the following podcast dialogue.
 
 **PERFORMANCE GUIDELINES:**
-* **Tone:** ${config.tone} (e.g., if "Heated", speak with intensity/interruption; if "Chill", speak calmly).
-* **Pacing:** ${config.pacing} (Adjust speed and pause duration).
-* **Audience:** ${config.audience}.
-* **Language:** ${config.language}.
+* **Tone:** ${config.tone}
+* **Pacing:** ${config.pacing}
+* **Audience:** ${config.audience}
+* **Language:** ${config.language}
 
-**ROLES:**
-* **${config.speaker1Name}:** ${config.speaker1Gender}, Voice: ${config.speaker1Voice}.
-* **${config.speaker2Name}:** ${config.speaker2Gender}, Voice: ${config.speaker2Voice}.
+**CRITICAL INSTRUCTIONS:**
+1. Speak naturally with appropriate emotional inflection matching the Tone.
+2. **DO NOT** read the speaker names (e.g., "Alex:") out loud.
+3. **DO NOT** read stage directions or brackets.
+4. Only speak the dialogue text.
 
-**INSTRUCTIONS:**
-* Speak naturally with appropriate emotional inflection.
-* Do NOT read speaker names (e.g., "Alex:") out loud.
-* Do NOT read stage directions (e.g., "[Laughs]").
-* Focus purely on the dialogue delivery.
+**DIALOGUE:**
+${chunkText}
 `;

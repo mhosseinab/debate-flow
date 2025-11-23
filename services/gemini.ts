@@ -2,7 +2,7 @@ import { GoogleGenAI } from "@google/genai";
 import { PodcastConfig, Logger } from "../types";
 import { cleanTranscript, parseTranscriptToSegments, buildSafeChunks } from "../lib/utils";
 import { generateSilence, decodeBase64Audio, concatenateBuffers } from "../lib/audioUtils";
-import { buildSystemPrompt, buildNamingPrompt, buildAudioPrompt, buildAudioSystemPrompt } from "./prompts";
+import { buildSystemPrompt, buildNamingPrompt, buildAudioPrompt } from "./prompts";
 
 const getAI = () => {
     if (!process.env.API_KEY) throw new Error("API Key missing");
@@ -94,9 +94,6 @@ export const generatePodcastAudio = async (
     // Chunk size drastically reduced to 600 chars to avoid 500 Internal Errors
     const chunks = buildSafeChunks(segments, 600);
 
-    // Generate the Acting Guide System Prompt
-    const audioSystemPrompt = buildAudioSystemPrompt(config);
-
     let successCount = 0;
 
     for (let i = 0; i < chunks.length; i++) {
@@ -109,9 +106,9 @@ export const generatePodcastAudio = async (
         // 2. Format for TTS: Convert **[ALEX]** -> Alex: for better model recognition
         const ttsInput = formatForTTS(rawChunk, config);
 
-        // 3. Build simplified prompt
+        // 3. Build simplified prompt with embedded system instructions
         const prompt = buildAudioPrompt(ttsInput, config);
-        const logId = log ? log('REQUEST', 'AUDIO', `SYSTEM: ${audioSystemPrompt}\n\nUSER: ${prompt}`) : undefined;
+        const logId = log ? log('REQUEST', 'AUDIO', `USER: ${prompt}`) : undefined;
 
         let attempt = 0;
         let chunkSuccess = false;
@@ -123,7 +120,7 @@ export const generatePodcastAudio = async (
                     model: "gemini-2.5-flash-preview-tts",
                     contents: [{ parts: [{ text: prompt }] }],
                     config: {
-                        systemInstruction: audioSystemPrompt,
+                        // REMOVED systemInstruction to fix 500 Errors
                         // Use string literal 'AUDIO' for experimental endpoint stability
                         responseModalities: ['AUDIO'], 
                         speechConfig: {
