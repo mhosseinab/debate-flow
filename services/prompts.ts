@@ -3,9 +3,8 @@ import { PromptTemplate } from "@langchain/core/prompts";
 import { PodcastConfig } from "../types";
 
 // DRY: Reusable template formatting helper
-const formatTemplate = (template: PromptTemplate, variables: Record<string, string>): string => {
-    const formatted = template.format(variables);
-    return String(formatted);
+const formatTemplate = async (template: PromptTemplate, variables: Record<string, string>): Promise<string> => {
+    return template.format(variables);
 };
 
 // DRY: Conditional section builder
@@ -50,7 +49,7 @@ Strictly use these speaker tags at the start of every turn:
 {userOverride}`;
 
 // Single Responsibility: System prompt builder
-export const buildSystemPrompt = (config: PodcastConfig): string => {
+export const buildSystemPrompt = async (config: PodcastConfig): Promise<string> => {
     const template = PromptTemplate.fromTemplate(SYSTEM_PROMPT_TEMPLATE);
     
     return formatTemplate(template, {

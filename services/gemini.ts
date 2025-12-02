@@ -200,7 +200,7 @@ export const generateDebateStream = async (
     onChunk: (text: string) => void, 
     log?: Logger
 ): Promise<void> => {
-    const systemPrompt = buildSystemPrompt(config);
+    const systemPrompt = await buildSystemPrompt(config);
     const fullPrompt = `SYSTEM:\n${systemPrompt}\n\nUSER INPUT:\n${inputScript.substring(0, 500)}... [truncated]`;
     const logId = log ? log('REQUEST', 'SCRIPT', fullPrompt) : undefined;
 
