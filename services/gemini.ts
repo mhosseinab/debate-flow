@@ -1,157 +1,324 @@
 
 import { GoogleGenAI } from "@google/genai";
-import { PodcastConfig, Logger } from "../types";
+import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
+import { SystemMessage, HumanMessage } from "@langchain/core/messages";
+import { BaseCallbackHandler } from "@langchain/core/callbacks/base";
+import { RunnableSequence, Runnable } from "@langchain/core/runnables";
+import { BaseOutputParser } from "@langchain/core/output_parsers";
+import { PodcastConfig, Logger, LogType } from "../types";
 import { cleanTranscript, parseTranscriptToSegments, buildSafeChunks } from "../lib/utils";
 import { generateSilence, decodeBase64Audio, concatenateBuffers } from "../lib/audioUtils";
 import { buildSystemPrompt, buildNamingPrompt, buildAudioPrompt } from "./prompts";
 
-const getAI = () => {
-    if (!process.env.API_KEY) throw new Error("API Key missing");
-    return new GoogleGenAI({ apiKey: process.env.API_KEY });
+// Constants
+const DEFAULT_MODEL = 'gemini-2.5-flash';
+const TTS_MODEL = 'gemini-2.5-flash-preview-tts';
+const DEFAULT_TEMPERATURE = 0.8;
+const DEFAULT_MAX_TOKENS = 8192;
+const DEFAULT_MAX_RETRIES = 3;
+const CHUNK_SIZE = 600;
+const MIN_TRANSCRIPT_LENGTH = 10;
+const AUDIO_SAMPLE_RATE = 24000;
+const SILENCE_DURATION = 0.5;
+const RETRY_BACKOFF_MS = 1000;
+
+// Single Responsibility: API Key validation
+const validateApiKey = (): string => {
+    const key = process.env.API_KEY;
+    if (!key) throw new Error("API Key missing");
+    return key;
 };
 
-// Helper to convert internal markdown format (**[ALEX]**) to clean TTS format (Alex:)
-const formatForTTS = (text: string, config: PodcastConfig): string => {
-    let formatted = text;
+// Single Responsibility: Model configuration
+interface ModelConfig {
+    temperature?: number;
+    maxOutputTokens?: number;
+    maxRetries?: number;
+}
 
-    // 1. Replace internal specific speaker tags with "Name:" format
-    // Case insensitive regex for Speaker 1
-    const s1Reg = new RegExp(`\\*\\*\\[${config.speaker1Name}\\]\\*\\*`, 'gi');
-    formatted = formatted.replace(s1Reg, `${config.speaker1Name}:`);
+const createModelConfig = (overrides: ModelConfig = {}): ModelConfig => ({
+    temperature: DEFAULT_TEMPERATURE,
+    maxOutputTokens: DEFAULT_MAX_TOKENS,
+    maxRetries: DEFAULT_MAX_RETRIES,
+    ...overrides
+});
 
-    // Case insensitive regex for Speaker 2
-    const s2Reg = new RegExp(`\\*\\*\\[${config.speaker2Name}\\]\\*\\*`, 'gi');
-    formatted = formatted.replace(s2Reg, `${config.speaker2Name}:`);
+// Single Responsibility: Output parsing for podcast names
+class PodcastNameParser extends BaseOutputParser<string> {
+    lc_namespace = ["custom", "podcast_name_parser"];
+    private readonly MAX_WORDS = 5;
+    private readonly DEFAULT_NAME = "Mind Matters";
 
-    // 2. Catch-all: Remove any remaining markdown bolding on brackets **[NAME]** -> Name:
-    formatted = formatted.replace(/\*\*\[(.*?)(?:\]\*\*|\])/g, "$1:");
+    getFormatInstructions(): string {
+        return "Return only the podcast name, max 5 words, no quotation marks.";
+    }
 
-    // 3. Remove double newlines to keep flow tight
-    formatted = formatted.replace(/\n\n/g, "\n");
+    async parse(text: string): Promise<string> {
+        const cleaned = text.trim().replace(/['"]/g, "");
+        const words = cleaned.split(/\s+/).slice(0, this.MAX_WORDS);
+        return words.join(" ") || this.DEFAULT_NAME;
+    }
+}
 
-    return formatted;
+// Single Responsibility: Logging integration for LangChain
+class LoggerCallbackHandler extends BaseCallbackHandler {
+    name = "LoggerCallbackHandler";
+    private readonly log?: Logger;
+    private readonly logId?: string;
+    private readonly prompt?: string;
+    private readonly logType: LogType;
+
+    constructor(log?: Logger, logId?: string, prompt?: string, logType: LogType = 'SCRIPT') {
+        super();
+        this.log = log;
+        this.logId = logId;
+        this.prompt = prompt;
+        this.logType = logType;
+    }
+
+    async handleLLMStart(): Promise<void> {
+        // Request already logged in calling function
+    }
+
+    async handleLLMEnd(output: any): Promise<void> {
+        if (!this.shouldLog()) return;
+        const content = output.generations?.[0]?.[0]?.text || output.text || "";
+        this.log!('RESPONSE', this.logType, this.prompt!, content, this.logId);
+    }
+
+    async handleLLMError(err: Error): Promise<void> {
+        if (!this.shouldLog()) return;
+        this.log!('ERROR', this.logType, this.prompt!, `ERROR: ${err.message}`, this.logId);
+    }
+
+    private shouldLog(): boolean {
+        return !!(this.log && this.logId && this.prompt);
+    }
+}
+
+// Single Responsibility: Google GenAI client factory
+const getAI = (): GoogleGenAI => {
+    return new GoogleGenAI({ apiKey: validateApiKey() });
 };
 
-export const generatePodcastName = async (inputScript: string, config: PodcastConfig, log?: Logger): Promise<string> => {
-    const prompt = buildNamingPrompt(inputScript, config);
-    const logId = log ? log('REQUEST', 'NAME', prompt) : undefined;
+// Single Responsibility: LangChain model factory
+const getLangChainModel = (
+    modelName: string = DEFAULT_MODEL, 
+    callbacks?: BaseCallbackHandler[],
+    config?: ModelConfig
+) => {
+    const modelConfig = createModelConfig(config);
+    const model = new ChatGoogleGenerativeAI({
+        model: modelName,
+        apiKey: validateApiKey(),
+        ...modelConfig
+    });
     
+    return callbacks?.length ? model.withConfig({ callbacks }) : model;
+};
+
+// Single Responsibility: Text transformation for TTS
+class TTSFormatter extends Runnable<string, string> {
+    lc_namespace = ["custom", "tts_formatter"];
+    private readonly speaker1Name: string;
+    private readonly speaker2Name: string;
+
+    constructor(config: PodcastConfig) {
+        super();
+        this.speaker1Name = config.speaker1Name;
+        this.speaker2Name = config.speaker2Name;
+    }
+
+    async invoke(input: string): Promise<string> {
+        return this.formatSpeakerTags(input)
+            .replace(/\*\*\[(.*?)(?:\]\*\*|\])/g, "$1:") // Remove markdown bolding
+            .replace(/\n\n/g, "\n"); // Remove double newlines
+    }
+
+    private formatSpeakerTags(text: string): string {
+        const patterns = [
+            { regex: new RegExp(`\\*\\*\\[${this.speaker1Name}\\]\\*\\*`, 'gi'), replacement: `${this.speaker1Name}:` },
+            { regex: new RegExp(`\\*\\*\\[${this.speaker2Name}\\]\\*\\*`, 'gi'), replacement: `${this.speaker2Name}:` }
+        ];
+        
+        return patterns.reduce((formatted, { regex, replacement }) => 
+            formatted.replace(regex, replacement), text
+        );
+    }
+}
+
+// DRY: Reusable error handler wrapper
+const withErrorHandling = async <T>(
+    operation: () => Promise<T>,
+    onError: (error: Error) => T,
+    log?: Logger,
+    logType?: LogType,
+    prompt?: string,
+    logId?: string
+): Promise<T> => {
     try {
-        const res = await getAI().models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: [{ parts: [{ text: prompt }] }]
-        });
-        const text = res.text?.trim().replace(/['"]/g, "") || "Mind Matters";
-        if (log) log('RESPONSE', 'NAME', prompt, text, logId);
-        return text;
-    } catch (e: any) { 
-        if (log) log('ERROR', 'NAME', prompt, `ERROR: ${e.message}`, logId);
-        return "The Daily Deep Dive"; 
+        return await operation();
+    } catch (error: any) {
+        if (log && prompt && logId) {
+            log('ERROR', logType || 'SCRIPT', prompt, `ERROR: ${error.message}`, logId);
+        }
+        return onError(error);
     }
 };
 
-export const generateDebateStream = async (inputScript: string, config: PodcastConfig, onChunk: (text: string) => void, log?: Logger) => {
+// Single Responsibility: Podcast name generation
+export const generatePodcastName = async (
+    inputScript: string, 
+    config: PodcastConfig, 
+    log?: Logger
+): Promise<string> => {
+    const prompt = await buildNamingPrompt(inputScript, config);
+    const logId = log ? log('REQUEST', 'NAME', prompt) : undefined;
+    const fallbackName = "The Daily Deep Dive";
+    
+    return withErrorHandling(
+        async () => {
+            const model = getLangChainModel(DEFAULT_MODEL);
+            const parser = new PodcastNameParser();
+            const response = await model.invoke([new HumanMessage(prompt)]);
+            const text = await parser.parse(response.content?.toString() || "");
+            if (log) log('RESPONSE', 'NAME', prompt, text, logId);
+            return text;
+        },
+        () => fallbackName,
+        log,
+        'NAME',
+        prompt,
+        logId
+    );
+};
+
+// Single Responsibility: Debate stream generation
+export const generateDebateStream = async (
+    inputScript: string, 
+    config: PodcastConfig, 
+    onChunk: (text: string) => void, 
+    log?: Logger
+): Promise<void> => {
     const systemPrompt = buildSystemPrompt(config);
     const fullPrompt = `SYSTEM:\n${systemPrompt}\n\nUSER INPUT:\n${inputScript.substring(0, 500)}... [truncated]`;
-    let fullResponse = "";
-
     const logId = log ? log('REQUEST', 'SCRIPT', fullPrompt) : undefined;
 
     try {
-        const stream = await getAI().models.generateContentStream({
-            model: 'gemini-2.5-flash',
-            contents: [{ role: 'user', parts: [{ text: inputScript }] }],
-            config: { systemInstruction: systemPrompt, temperature: 0.8, maxOutputTokens: 8192 }
-        });
+        const callbackHandler = new LoggerCallbackHandler(log, logId, fullPrompt, 'SCRIPT');
+        const model = getLangChainModel(DEFAULT_MODEL, [callbackHandler]);
+        const messages = [
+            new SystemMessage(systemPrompt),
+            new HumanMessage(inputScript)
+        ];
+        
+        let fullResponse = "";
+        const stream = await model.stream(messages);
 
         for await (const chunk of stream) {
-            if (chunk.text) {
-                onChunk(chunk.text);
-                fullResponse += chunk.text;
+            const content = chunk.content?.toString();
+            if (content) {
+                onChunk(content);
+                fullResponse += content;
             }
         }
+        
         if (log) log('RESPONSE', 'SCRIPT', fullPrompt, fullResponse, logId);
-    } catch (e: any) {
-        if (log) log('ERROR', 'SCRIPT', fullPrompt, `ERROR: ${e.message}`, logId);
-        throw e;
+    } catch (error: any) {
+        if (log) log('ERROR', 'SCRIPT', fullPrompt, `ERROR: ${error.message}`, logId);
+        throw error;
     }
 };
 
+// Single Responsibility: Audio chunk processing
+const processAudioChunk = async (
+    chunk: string,
+    index: number,
+    total: number,
+    config: PodcastConfig,
+    ctx: AudioContext,
+    log?: Logger
+): Promise<AudioBuffer | null> => {
+    const ttsFormatter = new TTSFormatter(config);
+    const ttsInput = await ttsFormatter.invoke(chunk);
+    const prompt = await buildAudioPrompt(ttsInput, config);
+    const logId = log ? log('REQUEST', 'AUDIO', `USER: ${prompt}`) : undefined;
+
+    const maxAttempts = DEFAULT_MAX_RETRIES;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+            const base64 = await generateAudioChunk(prompt, config);
+            if (!base64) throw new Error("No audio data returned");
+            
+            const buffer = await decodeBase64Audio(base64, ctx);
+            const sizeKB = Math.round(base64.length / 1024);
+            if (log) log('RESPONSE', 'AUDIO', prompt, `(Chunk ${index}/${total}) Success [${sizeKB}KB]`, logId);
+            return buffer;
+        } catch (error: any) {
+            if (log) log('ERROR', 'AUDIO', prompt, `(Chunk ${index}/${total}) Attempt ${attempt} Failed: ${error.message}`, logId);
+            if (attempt < maxAttempts) {
+                await new Promise(resolve => setTimeout(resolve, RETRY_BACKOFF_MS * attempt));
+            }
+        }
+    }
+    return null;
+};
+
+// Single Responsibility: Audio generation API call
+const generateAudioChunk = async (prompt: string, config: PodcastConfig): Promise<string | null> => {
+    const res = await getAI().models.generateContent({
+        model: TTS_MODEL,
+        contents: [{ parts: [{ text: prompt }] }],
+        config: {
+            responseModalities: ['AUDIO'],
+            speechConfig: {
+                multiSpeakerVoiceConfig: {
+                    speakerVoiceConfigs: [
+                        { speaker: config.speaker1Name, voiceConfig: { prebuiltVoiceConfig: { voiceName: config.speaker1Voice } } },
+                        { speaker: config.speaker2Name, voiceConfig: { prebuiltVoiceConfig: { voiceName: config.speaker2Voice } } }
+                    ]
+                }
+            }
+        }
+    });
+    return res.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data || null;
+};
+
+// Single Responsibility: Audio buffer creation
+const createAudioContext = (): AudioContext => {
+    const AudioContextClass = (window.AudioContext || (window as any).webkitAudioContext);
+    return new AudioContextClass({ sampleRate: AUDIO_SAMPLE_RATE });
+};
+
+// Single Responsibility: Podcast audio generation orchestration
 export const generatePodcastAudio = async (
-  transcript: string, 
-  config: PodcastConfig, 
-  onProgress?: (curr: number, total: number) => void,
-  log?: Logger
+    transcript: string,
+    config: PodcastConfig,
+    onProgress?: (curr: number, total: number) => void,
+    log?: Logger
 ): Promise<AudioBuffer> => {
     const cleaned = cleanTranscript(transcript);
-    if (cleaned.length < 10) throw new Error("Transcript empty");
+    if (cleaned.length < MIN_TRANSCRIPT_LENGTH) {
+        throw new Error("Transcript empty");
+    }
 
-    const AudioContextClass = (window.AudioContext || (window as any).webkitAudioContext);
-    const ctx = new AudioContextClass({ sampleRate: 24000 });
-    const buffers: AudioBuffer[] = [generateSilence(0.5, ctx)];
-
+    const ctx = createAudioContext();
+    const buffers: AudioBuffer[] = [generateSilence(SILENCE_DURATION, ctx)];
     const segments = parseTranscriptToSegments(cleaned, config.speaker1Name.toUpperCase());
-    
-    // Chunk size drastically reduced to 600 chars to avoid 500 Internal Errors
-    const chunks = buildSafeChunks(segments, 600);
+    const chunks = buildSafeChunks(segments, CHUNK_SIZE);
 
     let successCount = 0;
 
     for (let i = 0; i < chunks.length; i++) {
-        if (onProgress) onProgress(i + 1, chunks.length);
+        onProgress?.(i + 1, chunks.length);
         
-        // 1. Get raw chunk with **[SPEAKER]** tags
         const rawChunk = chunks[i].trim();
         if (rawChunk.length < 2) continue;
 
-        // 2. Format for TTS: Convert **[ALEX]** -> Alex: for better model recognition
-        const ttsInput = formatForTTS(rawChunk, config);
-
-        // 3. Build simplified prompt with embedded system instructions
-        const prompt = buildAudioPrompt(ttsInput, config);
-        const logId = log ? log('REQUEST', 'AUDIO', `USER: ${prompt}`) : undefined;
-
-        let attempt = 0;
-        let chunkSuccess = false;
-
-        while (attempt < 3 && !chunkSuccess) {
-            attempt++;
-            try {
-                const res = await getAI().models.generateContent({
-                    model: "gemini-2.5-flash-preview-tts",
-                    contents: [{ parts: [{ text: prompt }] }],
-                    config: {
-                        // Use string literal 'AUDIO' for experimental endpoint stability
-                        responseModalities: ['AUDIO'], 
-                        speechConfig: {
-                            multiSpeakerVoiceConfig: {
-                                speakerVoiceConfigs: [
-                                    { speaker: config.speaker1Name, voiceConfig: { prebuiltVoiceConfig: { voiceName: config.speaker1Voice } } },
-                                    { speaker: config.speaker2Name, voiceConfig: { prebuiltVoiceConfig: { voiceName: config.speaker2Voice } } }
-                                ]
-                            }
-                        }
-                    }
-                });
-
-                const base64 = res.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-                if (base64) {
-                    buffers.push(await decodeBase64Audio(base64, ctx));
-                    if (log) log('RESPONSE', 'AUDIO', prompt, `(Chunk ${i+1}/${chunks.length}) Success [${Math.round(base64.length/1024)}KB]`, logId);
-                    chunkSuccess = true;
-                    successCount++;
-                } else {
-                    throw new Error("No audio data returned");
-                }
-            } catch (e: any) { 
-                const isInternal = e.message.includes("500") || e.message.includes("Internal");
-                if (log) log('ERROR', 'AUDIO', prompt, `(Chunk ${i+1}/${chunks.length}) Attempt ${attempt} Failed: ${e.message}`, logId);
-                
-                if (attempt < 3) {
-                    // Backoff: 1s, 2s, 3s
-                    await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
-                }
-            }
+        const buffer = await processAudioChunk(rawChunk, i + 1, chunks.length, config, ctx, log);
+        if (buffer) {
+            buffers.push(buffer);
+            successCount++;
         }
     }
 
@@ -159,6 +326,6 @@ export const generatePodcastAudio = async (
         throw new Error("Audio generation failed completely. Please try again with a shorter script or different tone.");
     }
 
-    buffers.push(generateSilence(0.5, ctx));
+    buffers.push(generateSilence(SILENCE_DURATION, ctx));
     return concatenateBuffers(buffers, ctx);
 };
