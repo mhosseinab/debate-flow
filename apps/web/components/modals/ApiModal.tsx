@@ -28,6 +28,19 @@ export const ApiModal = ({ onSave, onClose, initialApiKey = "", canClose = false
     const [endpoint, setEndpoint] = useState(defaults.endpoint);
     const [lsKey, setLsKey] = useState(defaults.apiKey);
     const [lsProject, setLsProject] = useState(defaults.project);
+    const [saveError, setSaveError] = useState<string | null>(null);
+
+    const handleSave = () => {
+        try {
+            setSaveError(null);
+            onSave({
+                apiKey: val,
+                langsmith: { tracing, endpoint, apiKey: lsKey, project: lsProject },
+            });
+        } catch (e: any) {
+            setSaveError(e?.message ?? "Couldn't save your settings. Please try again.");
+        }
+    };
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-sm p-4">
@@ -91,11 +104,12 @@ export const ApiModal = ({ onSave, onClose, initialApiKey = "", canClose = false
                     </div>
                 )}
 
+                {saveError && (
+                    <p className="text-[11px] text-red-400 leading-relaxed text-left">{saveError}</p>
+                )}
+
                 <button
-                    onClick={() => onSave({
-                        apiKey: val,
-                        langsmith: { tracing, endpoint, apiKey: lsKey, project: lsProject },
-                    })}
+                    onClick={handleSave}
                     disabled={!val}
                     className="w-full py-2 bg-[#D0F224] text-black font-bold rounded uppercase text-xs hover:bg-[#c0e020] disabled:opacity-50"
                 >

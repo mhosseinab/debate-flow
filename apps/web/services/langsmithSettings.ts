@@ -1,3 +1,4 @@
+import { DEFAULT_LANGSMITH_ENDPOINT } from "@debateflow/core";
 import { setLangSmith } from "./observability";
 
 export interface LangSmithSettings {
@@ -9,7 +10,7 @@ export interface LangSmithSettings {
 
 export const DEFAULT_LANGSMITH_SETTINGS: LangSmithSettings = {
     tracing: true,
-    endpoint: "https://eu.api.smith.langchain.com",
+    endpoint: DEFAULT_LANGSMITH_ENDPOINT,
     apiKey: "",
     project: "debate-flow",
 };

@@ -28,7 +28,16 @@ export const getApiKey = (): string => {
 };
 
 export const setApiKey = (key: string): void => {
-    localStorage.setItem(STORAGE_KEY, key);
+    try {
+        localStorage.setItem(STORAGE_KEY, key);
+    } catch {
+        // Quota exceeded or storage disabled (Safari private mode). Surface a clear
+        // error so the caller can keep the modal open instead of falsely reporting
+        // the key as saved — the old in-memory assignment could never throw.
+        throw new Error(
+            "Couldn't save your API key — browser storage is unavailable (private mode or full).",
+        );
+    }
 };
 
 export const hasApiKey = (): boolean => Boolean(storedKey() || devEnvKey());
