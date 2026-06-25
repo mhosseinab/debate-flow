@@ -18,84 +18,130 @@ it to multi-speaker audio. The generation pipeline is a **LangGraph** graph with
 
 ## Architecture
 
-### Modularity (package & module boundaries)
+Three views, from static structure to runtime: **module boundaries**, the **generation state
+machine**, and the **end-to-end runtime flow**.
+
+### 1. Module boundaries
+
+The web app depends only on `@debateflow/core`; nothing outside `providers/` (**the seam**, in
+lime) imports a concrete model SDK. `core` is consumed as source — `exports` maps `.` →
+`src/index.ts` and `./evals` → `src/evals/index.ts`, keeping the Node-only `langsmith` eval glue
+out of the browser bundle.
 
 ```mermaid
 flowchart TB
-  subgraph web["apps/web — React SPA (UI only)"]
-    App[App.tsx]
-    Svc["services/gemini.ts<br/>orchestration"]
-    Obs["services/observability.ts<br/>BYOK LangSmith store"]
-    UI[components / hooks]
-    App --> Svc
+  subgraph WEB["apps/web · React SPA (UI only)"]
+    direction TB
+    App["App.tsx"]
+    UI["components / hooks"]
+    Svc["services/gemini.ts<br/><i>orchestration</i>"]
+    Obs["services/observability.ts<br/><i>BYOK LangSmith store</i>"]
     App --> UI
+    App --> Svc
     Svc --> Obs
   end
 
-  subgraph core["@debateflow/core — framework-agnostic"]
-    Seam["providers/ — THE SEAM<br/>createChatModel · TTSProvider"]
-    Graph["graph/ — LangGraph StateGraph"]
-    Guards["guards/ — input · output (zod)"]
-    Prompts[prompts.ts · lib/ · types.ts]
-    Tracer["observability/ — LangSmith tracer"]
-    Evals["evals/ — evaluators · judge · runEval"]
-    Graph --> Seam
+  subgraph CORE["@debateflow/core · framework-agnostic"]
+    direction TB
+    Graph["graph/<br/>LangGraph StateGraph"]
+    Guards["guards/<br/>input · output · zod"]
+    Prompts["prompts · lib · types"]
+    Evals["evals/<br/>evaluators · judge · runEval"]
+    Tracer["observability/<br/>LangSmith tracer"]
+    Seam(["providers/ — THE SEAM<br/>createChatModel · TTSProvider"])
     Graph --> Guards
     Graph --> Prompts
-    Evals --> Seam
+    Graph --> Seam
     Evals --> Guards
+    Evals --> Seam
   end
 
-  subgraph ext["External (BYOK)"]
-    LLM[(LLM provider<br/>Gemini / OpenAI)]
-    LS[(LangSmith)]
+  subgraph EXT["External · BYOK"]
+    LLM[("LLM provider<br/>Gemini · OpenAI")]
+    LS[("LangSmith")]
   end
 
-  Svc --> Graph
-  Svc --> Seam
+  CLI["pnpm eval · Node"] --> Evals
+
+  Svc ==> Graph
   Obs --> Tracer
-  Seam --> LLM
   Tracer --> LS
-  EvalScript["node: pnpm eval"] --> Evals
+  Seam ==> LLM
   Evals --> LS
 
-  classDef pkg fill:#0a0a0a,stroke:#D0F224,color:#fff;
-  class web,core,ext pkg;
+  classDef layer fill:#f8fafc,stroke:#cbd5e1,color:#0f172a;
+  classDef webNode fill:#eef2ff,stroke:#6366f1,color:#1e1b4b;
+  classDef coreNode fill:#f7fee7,stroke:#65a30d,color:#1a2e05;
+  classDef seamNode fill:#D0F224,stroke:#3f6212,color:#1a2e05,font-weight:bold;
+  classDef extNode fill:#f1f5f9,stroke:#475569,color:#0f172a;
+  class WEB,CORE,EXT layer;
+  class App,UI,Svc,Obs,CLI webNode;
+  class Graph,Guards,Prompts,Evals,Tracer coreNode;
+  class Seam seamNode;
+  class LLM,LS extNode;
 ```
 
-The web app depends only on `@debateflow/core`; nothing outside `providers/` imports a concrete
-model SDK. `core` is consumed as source — `exports` maps `.` → `src/index.ts` and `./evals` →
-`src/evals/index.ts`, keeping the Node-only `langsmith` eval glue out of the browser bundle.
+### 2. Generation state machine
 
-### Data flow (debate generation)
+The LangGraph `StateGraph` that runs in the browser. The output guard gates a **bounded repair
+loop**: on a format/safety failure it re-runs generation (clearing the UI via `onReset`) until
+the transcript passes or the repair budget is exhausted.
 
 ```mermaid
 flowchart LR
-  U[User: source + config] --> A[App.tsx]
-  A --> G["generateDebateStream()"]
-  G --> R["runDebateGraph()"]
+  START((START)) --> IG{{inputGuard}}
+  IG -->|ok| GT["generateTranscript"]
+  IG -->|fail| ERR[["abort → error"]]
+  GT --> OG{{outputGuard}}
+  OG -->|ok| DONE(((END)))
+  OG -->|fail · exhausted| DONE
+  OG -->|fail · repairs left| RP["repair"]
+  RP --> GT
+  GT -.->|createChatModel| SEAM(["Provider seam"])
+  SEAM -.-> LLM[("LLM")]
 
-  subgraph graph["LangGraph StateGraph (browser)"]
-    IG{inputGuard} -->|ok| GT[generateTranscript]
-    IG -->|fail| EX[(abort → error)]
-    GT --> OG{outputGuard}
-    OG -->|ok| EN[(END)]
-    OG -->|fail, repairs left| RP[repair] --> GT
-    OG -->|fail, exhausted| EN
-  end
-
-  R --> IG
-  GT -->|createChatModel cfg| SEAM[Provider seam]
-  SEAM --> P[(LLM provider)]
-  GT -->|onToken stream| A
-  R -.callbacks: logger + tracer.-> LSM[(LangSmith)]
-  EN --> T[Transcript in UI]
-  T --> AUD["generatePodcastAudio()"] --> TTS[TTSProvider seam] --> WAV[AudioBuffer → WAV]
+  classDef node fill:#f7fee7,stroke:#65a30d,color:#1a2e05;
+  classDef guard fill:#fef3c7,stroke:#d97706,color:#451a03;
+  classDef repair fill:#ffe4e6,stroke:#e11d48,color:#4c0519;
+  classDef terminal fill:#e2e8f0,stroke:#475569,color:#0f172a;
+  classDef seamNode fill:#D0F224,stroke:#3f6212,color:#1a2e05,font-weight:bold;
+  classDef ext fill:#f1f5f9,stroke:#475569,color:#0f172a;
+  class GT node;
+  class IG,OG guard;
+  class RP,ERR repair;
+  class START,DONE terminal;
+  class SEAM seamNode;
+  class LLM ext;
 ```
 
-`onToken` streams tokens to the UI live; a guard-triggered repair calls `onReset` so the UI
-clears before re-streaming. Top-level graph callbacks (logger + optional LangSmith tracer)
-propagate to the model run.
+### 3. End-to-end runtime flow
+
+From a user's source text to streamed transcript to rendered audio. `onToken` streams tokens to
+the UI live; top-level graph callbacks (logger + optional LangSmith tracer) propagate to the
+model run.
+
+```mermaid
+flowchart LR
+  U(["User<br/>source + config"]) --> App["App.tsx"]
+  App --> Gen["generateDebateStream()"]
+  Gen --> RDG["runDebateGraph()"]
+  RDG --> Pipe[["LangGraph pipeline<br/>guards + repair loop"]]
+  Pipe -->|onToken stream| App
+  Pipe --> Tx["Transcript"]
+  Tx --> Aud["generatePodcastAudio()"]
+  Aud --> TTS(["TTSProvider seam"])
+  TTS --> Wav["AudioBuffer → WAV"]
+  RDG -. logger + tracer .-> LS[("LangSmith")]
+
+  classDef ui fill:#eef2ff,stroke:#6366f1,color:#1e1b4b;
+  classDef core fill:#f7fee7,stroke:#65a30d,color:#1a2e05;
+  classDef seamNode fill:#D0F224,stroke:#3f6212,color:#1a2e05,font-weight:bold;
+  classDef ext fill:#f1f5f9,stroke:#475569,color:#0f172a;
+  class U,App ui;
+  class Gen,RDG,Pipe,Tx,Aud,Wav core;
+  class TTS seamNode;
+  class LS ext;
+```
 
 ## Quick start
 
