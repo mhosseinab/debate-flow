@@ -1,0 +1,13 @@
+@import "tailwindcss";
+
+/* Build-time Tailwind (no CDN). Brand fonts back the font-sans / font-mono
+   utilities; loaded via <link> in index.html. Accent color #D0F224 is applied
+   inline with arbitrary values (e.g. bg-[#D0F224]). */
+@theme {
+  --font-sans: "Inter", sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+}
+
+body {
+  font-family: var(--font-sans);
+}

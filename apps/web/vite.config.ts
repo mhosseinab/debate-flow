@@ -1,6 +1,7 @@
 import path from 'path';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
 
 // .env lives at the monorepo root. Only VITE_-prefixed vars are exposed to the
 // client (via import.meta.env), and the app reads VITE_GEMINI_API_KEY ONLY in dev
@@ -14,7 +15,13 @@ export default defineConfig({
     port: 3000,
     host: '0.0.0.0',
   },
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
+  build: {
+    // No inline modulepreload-polyfill script, so the CSP can keep script-src 'self'
+    // (no inline-script hash needed). Targets are modern browsers that support
+    // <link rel="modulepreload"> natively.
+    modulePreload: { polyfill: false },
+  },
   resolve: {
     alias: {
       '@': path.resolve(__dirname, '.'),
