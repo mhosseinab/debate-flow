@@ -14,6 +14,7 @@ apps/web/                 # React 19 + Vite SPA (UI only). Imports @debateflow/c
   components/ hooks/ constants.ts
 packages/core/            # @debateflow/core — framework-agnostic, no React
   src/providers/          #   THE SEAM: createChatModel (registry) + TTSProvider
+    chat/                 #     GoogleGenAI, OpenAI, DeepSeek providers
   src/graph/              #   LangGraph StateGraph (debateGraph.ts, state.ts)
   src/guards/             #   input/output guards (pure, zod for tag schema)
   src/evals/              #   evaluators + judge + seed dataset + runEval.ts
@@ -51,10 +52,14 @@ imported. Guards + repair live in the graph; tracing/evals reuse the same seam.
 
 - React 19 + TypeScript, **Vite** (`apps/web/vite.config.ts`, dev server on port 3000).
   `.env` is at the repo root; Vite's `envDir` points there.
-- **Provider seam** (`packages/core/src/providers/chatModel.ts`): a registry that lazily
-  imports only the chat providers it supports (`google-genai`, `openai`). Returns a
-  LangChain `BaseChatModel`. Nothing downstream imports a concrete chat SDK. TTS has its
-  own `TTSProvider` seam (`GeminiTTSProvider` for multi-speaker).
+- **Provider seam** (`packages/core/src/providers/chatModel.ts`): a registry of chat
+  providers (`google-genai`, `openai`, `deepseek`) that lazily imports only the SDK each
+  needs (`@langchain/google-genai`, `@langchain/openai`). `deepseek` subclasses the
+  OpenAI provider and points at `https://api.deepseek.com/v1` by default; `baseURL` on
+  `ProviderConfig` overrides endpoints for `openai` and `deepseek`. Returns a LangChain
+  `BaseChatModel`. Nothing downstream imports a concrete chat SDK. The active provider is
+  chosen by `config.llm` (defaults in `apps/web/constants.ts` — no UI picker yet). TTS
+  has its own `TTSProvider` seam (`GeminiTTSProvider` only today; multi-speaker).
 - **LangGraph** (`@langchain/langgraph/web`): `START → inputGuard → generateTranscript →
   outputGuard → (repair → generateTranscript)* → END`. Streaming preserved via an
   `onToken` callback; repair re-runs call `onReset` so the UI clears first.
@@ -66,8 +71,10 @@ imported. Guards + repair live in the graph; tracing/evals reuse the same seam.
   Accent color `#D0F224` (used as arbitrary values, e.g. `bg-[#D0F224]`).
 - **CSP / security headers** ship via `apps/web/public/_headers` (Cloudflare Pages),
   not a `<meta>` tag, so the Vite dev server (needs inline/eval for HMR) is unaffected.
-  `script-src 'self'`; `connect-src` is scoped to Gemini + LangSmith — a custom
-  LangSmith endpoint on another domain needs an entry added there.
+  `script-src 'self'`; `connect-src` is scoped to Gemini + LangSmith today. If you switch
+  the web app to `openai` or `deepseek`, add `https://api.openai.com` and/or
+  `https://api.deepseek.com` (or a custom `baseURL` host) in `apps/web/public/_headers`.
+  A custom LangSmith endpoint on another domain also needs an entry there.
 
 ## Commands (run from repo root)
 
@@ -77,23 +84,27 @@ pnpm build       # build the web app → apps/web/dist
 pnpm preview     # preview the build
 pnpm typecheck   # pnpm -r typecheck (tsc --noEmit per package) — the Stop hook runs this
 pnpm test        # pnpm -r test (Vitest)
-pnpm eval        # offline eval suite — needs GEMINI_API_KEY + LANGSMITH_API_KEY (see docs/EVALS.md)
+pnpm eval        # offline eval suite — provider key + LANGSMITH_API_KEY (see docs/EVALS.md)
 ```
 
 The Stop hook runs `pnpm -r typecheck`. There is no linter/formatter.
 
 ## API key handling (BYOK)
 
-- The user pastes their **LLM provider key** in `ApiModal`; it is persisted in the
+- The user pastes their **LLM provider API key** in `ApiModal`; it is persisted in the
   browser (`localStorage` key `df_api_key`) and resolved by `services/apiKey.ts`
-  (`getApiKey` / `setApiKey` / `hasApiKey`). Asked once, then reused across reloads.
+  (`getApiKey` / `setApiKey` / `hasApiKey`). The key must match `config.llm.provider`
+  (Gemini, OpenAI, or DeepSeek). Asked once, then reused across reloads.
 - **Key resolution order** (`services/apiKey.ts`): browser-stored key → dev-only env
-  fallback. The dev fallback reads `import.meta.env.VITE_GEMINI_API_KEY` and is gated on
-  `import.meta.env.DEV`, so in a production build the branch folds to `undefined` and the
-  reference is dropped — **no key is ever inlined into the static bundle.**
+  fallback. The dev fallback reads `import.meta.env.VITE_GEMINI_API_KEY` (Gemini only) and
+  is gated on `import.meta.env.DEV`, so in a production build the branch folds to
+  `undefined` and the reference is dropped — **no key is ever inlined into the static
+  bundle.**
 - **Do NOT re-introduce a `define` for the API key in `vite.config.ts`.** That inlines a
   build-time secret into the world-readable bundle (this is how a key once leaked publicly).
-  Builds must never bake in a key; the eval suite's `GEMINI_API_KEY` is Node-only.
+  Builds must never bake in a key; eval keys (`GEMINI_API_KEY`, `OPENAI_API_KEY`,
+  `DEEPSEEK_API_KEY`) are Node-only. Offline eval provider selection:
+  `EVAL_PROVIDER` / `EVAL_MODEL` / `EVAL_BASE_URL` in `runEval.ts`.
 - LangSmith is also BYOK but deliberately **NOT persisted** — optional key + project entered
   in `ApiModal`, held in memory by `services/observability.ts` (asymmetry is intentional:
   the LLM key is persisted, the LangSmith key is not). Traces post browser → LangSmith
@@ -103,7 +114,8 @@ The Stop hook runs `pnpm -r typecheck`. There is no linter/formatter.
 ## Conventions
 
 - `core` is framework-agnostic: no React, no concrete provider SDK imports outside the seam.
-- The seam is the extension point — add a provider by adding one registry entry + its package.
+- The seam is the extension point — add a chat provider by adding a `ChatProvider` class
+  under `providers/chat/` + one registry entry in `chatModel.ts` (and its package dep).
 - Speaker tags use `**[Name]**`; `TTSFormatter` (in `services/gemini.ts`) rewrites them to
   `Name:` before TTS, and the output guard / evaluators validate that contract. Keep it.
 - Evaluator logic is pure and judge-injected (fake judge in tests); `runEval.ts` is the only

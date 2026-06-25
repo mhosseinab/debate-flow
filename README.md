@@ -9,7 +9,7 @@ it to multi-speaker audio. The generation pipeline is a **LangGraph** graph with
 ## Features
 
 - **AI script generation** — convert articles, essays, or notes into natural podcast dialogue
-- **Provider-agnostic** — swap the LLM (Gemini, OpenAI, …) by config, not code, via the seam
+- **Provider-agnostic** — swap the chat LLM (Gemini, OpenAI, DeepSeek) via `config.llm`, not code; the seam lazy-loads only the SDK each provider needs
 - **Guarded pipeline** — input validation + output format/safety checks with a bounded repair retry
 - **Real-time streaming** — watch the transcript generate live
 - **Multi-speaker audio** — Gemini multi-speaker TTS (Puck, Charon, Kore, Fenrir, Zephyr)
@@ -57,7 +57,7 @@ flowchart TB
   end
 
   subgraph EXT["External · BYOK"]
-    LLM[("LLM provider<br/>Gemini · OpenAI")]
+    LLM[("LLM provider<br/>Gemini · OpenAI · DeepSeek")]
     LS[("LangSmith")]
   end
 
@@ -151,10 +151,35 @@ pnpm install
 pnpm dev          # http://localhost:3000
 ```
 
-On first launch, paste your **LLM provider API key** in the modal (BYOK; held in memory for the
-session). Optionally expand **Production tracing** to add a LangSmith key + project. For local
-dev you may instead put `GEMINI_API_KEY=...` in a root `.env` (do **not** ship a build made with
-that env set — it bakes the key into the static bundle).
+On first launch, paste the **API key for your configured chat provider** in the modal
+(BYOK; persisted in `localStorage` and reused across reloads). Optionally expand
+**Production tracing** to add a LangSmith key + project (held in memory only). For local
+dev with the default Gemini provider you may put `VITE_GEMINI_API_KEY=...` in a root
+`.env` — the app reads it only when `import.meta.env.DEV` is true, so production builds
+never inline a key.
+
+## Providers
+
+Chat (transcript generation) and TTS (audio) are separate seams in
+`packages/core/src/providers/`.
+
+| Layer | Providers | How to choose |
+|---|---|---|
+| **Chat** | `google-genai`, `openai`, `deepseek` | Set `config.llm` in `apps/web/constants.ts` (`provider`, `model`, optional `baseURL`) |
+| **TTS** | `google-genai` only | Set `config.tts` (Gemini multi-speaker) |
+
+`deepseek` uses the same OpenAI-compatible client as `openai`, defaulting to
+`https://api.deepseek.com/v1`. The BYOK key in `ApiModal` must match the configured chat
+provider. There is no provider picker in the UI yet — change `DEFAULT_CONFIG.llm` to swap.
+
+**CSP:** deployed `connect-src` in `apps/web/public/_headers` allows Gemini + LangSmith
+today. If you point the web app at OpenAI or DeepSeek, add the matching API host (or your
+custom `baseURL`) there before deploying.
+
+**Offline evals:** `pnpm eval` defaults to Gemini. Override with `EVAL_PROVIDER`
+(`google-genai` \| `openai` \| `deepseek`), `EVAL_MODEL`, and `EVAL_BASE_URL`; set the
+matching key env var (`GEMINI_API_KEY`, `OPENAI_API_KEY`, or `DEEPSEEK_API_KEY`). See
+[`docs/EVALS.md`](docs/EVALS.md).
 
 ## Commands (run from repo root)
 
@@ -165,14 +190,15 @@ that env set — it bakes the key into the static bundle).
 | `pnpm preview` | Preview the production build |
 | `pnpm typecheck` | `tsc --noEmit` across packages (also run by the Stop hook) |
 | `pnpm test` | Vitest unit tests (seam, graph, guards, evaluators) |
-| `pnpm eval` | Offline eval suite (needs `GEMINI_API_KEY` + `LANGSMITH_API_KEY`) |
+| `pnpm eval` | Offline eval suite (provider key + `LANGSMITH_API_KEY`; optional `EVAL_PROVIDER`) |
 
 ## Evals
 
 Four quality dimensions, defined once and reused by the offline suite and online Run Rules:
-**faithfulness**, **format & tag compliance**, **config adherence**, **safety**. See
-[`docs/EVALS.md`](docs/EVALS.md) for the offline run and how to wire production (online)
-evaluators in your own LangSmith project.
+**faithfulness**, **format & tag compliance**, **config adherence**, **safety**. The offline
+suite runs the same graph through whichever chat provider `EVAL_PROVIDER` selects (default:
+Gemini). See [`docs/EVALS.md`](docs/EVALS.md) for the offline run and how to wire production
+(online) evaluators in your own LangSmith project.
 
 ## Project structure
 
@@ -181,7 +207,8 @@ apps/web/                 # React 19 + Vite SPA (UI only)
   services/               #   gemini.ts (orchestration), observability.ts (BYOK tracing)
   components/ hooks/ constants.ts
 packages/core/            # @debateflow/core — no React, no concrete SDK outside the seam
-  src/providers/          #   the seam: createChatModel (registry) + TTSProvider
+  src/providers/          #   the seam: chatModel registry + TTSProvider
+    chat/                 #     GoogleGenAI, OpenAI, DeepSeek (OpenAI-compatible)
   src/graph/              #   LangGraph StateGraph + state
   src/guards/             #   input/output guards (zod)
   src/evals/              #   evaluators, judge, seed dataset, runEval.ts
@@ -194,9 +221,9 @@ wrangler.toml             # Cloudflare Pages (static, apps/web/dist)
 
 ## Tech stack
 
-- **Frontend**: React 19, TypeScript, Vite, Tailwind (CDN)
+- **Frontend**: React 19, TypeScript, Vite, Tailwind v4 (compile-time via `@tailwindcss/vite`)
 - **Orchestration**: LangGraph (`@langchain/langgraph/web`) + LangChain core
-- **Models**: provider-agnostic seam (Gemini 2.5 Flash, OpenAI, …) + Gemini multi-speaker TTS
+- **Models**: chat seam (Gemini, OpenAI, DeepSeek) + Gemini multi-speaker TTS
 - **Evals/Observability**: LangSmith (`evaluate()` offline + Run Rules online)
 - **Validation/Tests**: zod, Vitest
 - **Tooling**: pnpm workspaces; **Cloudflare Pages** static hosting
@@ -216,14 +243,14 @@ Languages: English, Spanish, French, German, Portuguese, Japanese, Persian.
 ## Deployment (Cloudflare Pages)
 
 Static SPA — no Pages Functions. Build output `apps/web/dist`, SPA fallback via
-`apps/web/public/_redirects`. CI (`.github/workflows/deploy.yml`) deploys on push to `main`
-using `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` repo secrets.
+`apps/web/public/_redirects`. CI (`.github/workflows/deploy.yml`) deploys on version tags
+(`v*.*.*`) using `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` repo secrets.
 
 ## Notes
 
-- BYOK: keys are entered at runtime and held in memory only (not persisted).
+- **BYOK:** the LLM provider key is persisted in `localStorage`; LangSmith credentials are
+  session-only (not persisted).
+- Audio synthesis uses Gemini TTS regardless of which chat provider generates the transcript.
 - Audio synthesis processes in chunks and may take a while for longer scripts; needs a browser
   with Web Audio API.
 - All AI operations require an internet connection and a valid provider key.
-```
-```
