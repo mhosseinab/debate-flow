@@ -1,10 +1,10 @@
-// Stop hook: typecheck the project once Claude finishes a turn.
-// This is the only safety net — the project has no tests, linter, or build step
-// in CI. Runs `tsc --noEmit` and surfaces any errors back to Claude.
+// Stop hook: typecheck the workspace once Claude finishes a turn.
+// This is the only static safety net besides Vitest. Runs `tsc --noEmit` across
+// every workspace package via `pnpm -r typecheck` and surfaces errors back to Claude.
 import { execSync } from 'node:child_process';
 
 try {
-  execSync('npx tsc --noEmit', { stdio: 'pipe' });
+  execSync('pnpm -r typecheck', { stdio: 'pipe' });
   process.exit(0);
 } catch (e) {
   const out = (e.stdout?.toString() || '') + (e.stderr?.toString() || '');

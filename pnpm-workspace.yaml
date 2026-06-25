@@ -1,0 +1,14 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+
+allowBuilds:
+  '@google/genai': true
+  esbuild: true
+  protobufjs: true
+
+# Standard pnpm key (used by CI runners that don't honor `allowBuilds`).
+onlyBuiltDependencies:
+  - esbuild
+  - "@google/genai"
+  - protobufjs

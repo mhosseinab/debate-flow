@@ -1,0 +1,30 @@
+{
+  "name": "@debateflow/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./evals": "./src/evals/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "eval": "tsx src/evals/runEval.ts"
+  },
+  "dependencies": {
+    "@google/genai": "^1.52.0",
+    "@langchain/core": "^1.2.1",
+    "@langchain/google-genai": "^2.2.0",
+    "@langchain/langgraph": "^1.4.5",
+    "@langchain/openai": "^1.5.3",
+    "langsmith": "^0.7.11",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.0",
+    "tsx": "^4.22.4",
+    "typescript": "~5.8.2",
+    "vitest": "^4.1.9"
+  }
+}

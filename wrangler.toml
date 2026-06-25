@@ -1,0 +1,5 @@
+# Cloudflare Pages — static SPA deploy. No Pages Functions: the app is fully
+# client-side (BYOK), so there is no server runtime and no secrets to bind here.
+name = "debateflow"
+pages_build_output_dir = "apps/web/dist"
+compatibility_date = "2026-06-25"
