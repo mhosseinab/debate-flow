@@ -23,6 +23,15 @@ jobs:
       - run: pnpm --filter @debateflow/core eval
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          # Chat provider selection for the eval target/judge. `vars` are not
+          # auto-injected — each must be forwarded by name. Defaults in
+          # runEval.ts (google-genai/gemini-2.5-flash) apply when unset.
+          EVAL_PROVIDER: ${{ vars.EVAL_PROVIDER }}
+          EVAL_MODEL: ${{ vars.EVAL_MODEL }}
+          EVAL_BASE_URL: ${{ vars.EVAL_BASE_URL }}
+          # Provider keys: runEval reads the one matching EVAL_PROVIDER.
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
           # DebateFlow defaults to EU LangSmith in-app; mirror that in CI so
           # workspace-scoped keys don't 403 against the US endpoint.

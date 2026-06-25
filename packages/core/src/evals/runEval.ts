@@ -21,6 +21,10 @@ import { createLangSmithClient } from "../observability/client";
 import { runDebateGraph } from "../graph/debateGraph";
 import { createJudgeFromConfig } from "./judge";
 import { ALL_EVALUATORS } from "./evaluators";
+import {
+  formatEvalValidationFailures,
+  validateExperimentResults,
+} from "./validateExperimentResults";
 import type { PodcastConfig } from "../types";
 import type { ProviderConfig, ChatProviderId } from "../providers/types";
 
@@ -66,15 +70,22 @@ const PROVIDER_DEFAULTS: Record<ChatProviderId, { model: string; keyEnv: string 
  * OpenAI when the Gemini free-tier quota is exhausted.
  */
 function resolveLlm(): { llm: ProviderConfig; apiKey: string | undefined; keySource: string } {
-  const provider = (process.env.EVAL_PROVIDER ?? "google-genai") as ChatProviderId;
+  // Unset GitHub Actions `vars`/`secrets` expand to "" (not undefined), so treat
+  // empty strings as unset — otherwise `?? default` is skipped and e.g. an empty
+  // EVAL_BASE_URL would override a provider's default endpoint.
+  const env = (name: string): string | undefined => {
+    const v = process.env[name];
+    return v && v.length > 0 ? v : undefined;
+  };
+  const provider = (env("EVAL_PROVIDER") ?? "google-genai") as ChatProviderId;
   const defaults = PROVIDER_DEFAULTS[provider];
   if (!defaults) throw new Error(`Unknown EVAL_PROVIDER "${provider}". Known: ${Object.keys(PROVIDER_DEFAULTS).join(", ")}`);
   // Gemini keeps its historical API_KEY fallback; others read only their own var.
-  const apiKey = process.env[defaults.keyEnv] ?? (provider === "google-genai" ? process.env.API_KEY : undefined);
+  const apiKey = env(defaults.keyEnv) ?? (provider === "google-genai" ? env("API_KEY") : undefined);
   const llm: ProviderConfig = {
     provider,
-    model: process.env.EVAL_MODEL ?? defaults.model,
-    baseURL: process.env.EVAL_BASE_URL,
+    model: env("EVAL_MODEL") ?? defaults.model,
+    baseURL: env("EVAL_BASE_URL"),
     temperature: 0.8,
     maxOutputTokens: 8192,
     maxRetries: 3,
@@ -147,11 +158,26 @@ export async function runEvalSuite(): Promise<void> {
     return ev(input, judge);
   });
 
-  await evaluate(target, { data: DATASET_NAME, evaluators, experimentPrefix: "debateflow-offline", client });
+  const experiment = await evaluate(target, {
+    data: DATASET_NAME,
+    evaluators,
+    experimentPrefix: "debateflow-offline",
+    client,
+  });
+
+  const rows = [...experiment.results];
+  const failures = validateExperimentResults(rows, seed.length);
+  if (failures.length > 0) {
+    throw new Error(
+      `Eval suite incomplete (${failures.length} issue${failures.length === 1 ? "" : "s"}):\n${formatEvalValidationFailures(failures)}`,
+    );
+  }
+
+  console.log(`[eval] passed — ${rows.length} examples, experiment "${experiment.experimentName}"`);
 }
 
 // Direct-run entrypoint (`tsx runEval.ts`).
 runEvalSuite().catch((err) => {
   console.error(err);
-  process.exitCode = 1;
+  process.exit(1);
 });
