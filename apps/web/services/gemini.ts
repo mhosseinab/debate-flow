@@ -11,6 +11,7 @@ import {
     createChatModel, createTTSProvider, TTSProvider, runDebateGraph,
 } from "@debateflow/core";
 import { buildTracer } from "./observability";
+import { getApiKey } from "./apiKey";
 
 // Constants (orchestration-level; model/provider settings now live in config.llm / config.tts)
 const DEFAULT_MAX_RETRIES = 3;
@@ -20,12 +21,7 @@ const AUDIO_SAMPLE_RATE = 24000;
 const SILENCE_DURATION = 0.5;
 const RETRY_BACKOFF_MS = 1000;
 
-// Single Responsibility: BYOK API key resolution (set by ApiModal into process.env.API_KEY)
-const getApiKey = (): string => {
-    const key = process.env.API_KEY;
-    if (!key) throw new Error("API Key missing");
-    return key;
-};
+// BYOK provider-key resolution lives in ./apiKey (localStorage, dev-env fallback).
 
 // Single Responsibility: build a chat model through the provider seam, optionally
 // binding callbacks. The concrete provider is chosen by config.llm — never hard-coded.

@@ -4,6 +4,7 @@ import { Radio, FileText, Settings2, Sparkles, Bug } from 'lucide-react';
 import { DEFAULT_CONFIG } from './constants';
 import { generateDebateStream } from './services/gemini';
 import { setLangSmith } from './services/observability';
+import { setApiKey, hasApiKey } from './services/apiKey';
 import { useLocalStorage } from './hooks/useLocalStorage';
 import { useLogger } from './hooks/useLogger';
 import { PodcastConfig } from "@debateflow/core";
@@ -20,7 +21,7 @@ const App: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<'source' | 'config'>('source');
-  const [showKeyModal, setShowKeyModal] = useState(!process.env.API_KEY);
+  const [showKeyModal, setShowKeyModal] = useState(!hasApiKey());
   const [showDebug, setShowDebug] = useState(false);
   
   const [config, setConfig] = useLocalStorage<PodcastConfig>('df_config', DEFAULT_CONFIG);
@@ -43,7 +44,7 @@ const App: React.FC = () => {
   return (
     <div className="h-screen flex flex-col bg-black text-white font-sans selection:bg-[#D0F224] selection:text-black overflow-hidden">
       {showKeyModal && <ApiModal onSave={({ apiKey, langsmithKey, langsmithProject }) => {
-          process.env.API_KEY = apiKey;
+          setApiKey(apiKey); // persisted in the browser (localStorage); asked once
           if (langsmithKey) setLangSmith(langsmithKey, langsmithProject);
           setShowKeyModal(false);
       }} />}

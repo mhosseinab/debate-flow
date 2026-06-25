@@ -77,14 +77,20 @@ The Stop hook runs `pnpm -r typecheck`. There is no linter/formatter.
 
 ## API key handling (BYOK)
 
-- The user pastes their **LLM provider key** in `ApiModal`, which sets
-  `process.env.API_KEY` in memory for the session (`getApiKey()` in `services/gemini.ts`).
-- `vite.config.ts` still `define`s `process.env.API_KEY` from a root `.env` for local dev
-  convenience. **Footgun:** building with `GEMINI_API_KEY` in env bakes it into the
-  world-readable static bundle. The deploy workflow does NOT set it (keep it that way).
-- LangSmith is also BYOK: optional key + project entered in `ApiModal`, held in memory by
-  `services/observability.ts`; never persisted. Traces post browser → LangSmith (CORS is
-  open). See `docs/EVALS.md` for wiring online (production) evaluators.
+- The user pastes their **LLM provider key** in `ApiModal`; it is persisted in the
+  browser (`localStorage` key `df_api_key`) and resolved by `services/apiKey.ts`
+  (`getApiKey` / `setApiKey` / `hasApiKey`). Asked once, then reused across reloads.
+- **Key resolution order** (`services/apiKey.ts`): browser-stored key → dev-only env
+  fallback. The dev fallback reads `import.meta.env.VITE_GEMINI_API_KEY` and is gated on
+  `import.meta.env.DEV`, so in a production build the branch folds to `undefined` and the
+  reference is dropped — **no key is ever inlined into the static bundle.**
+- **Do NOT re-introduce a `define` for the API key in `vite.config.ts`.** That inlines a
+  build-time secret into the world-readable bundle (this is how a key once leaked publicly).
+  Builds must never bake in a key; the eval suite's `GEMINI_API_KEY` is Node-only.
+- LangSmith is also BYOK but deliberately **NOT persisted** — optional key + project entered
+  in `ApiModal`, held in memory by `services/observability.ts` (asymmetry is intentional:
+  the LLM key is persisted, the LangSmith key is not). Traces post browser → LangSmith
+  (CORS is open). See `docs/EVALS.md` for wiring online (production) evaluators.
 - **Never edit `.env` directly** — a PreToolUse hook blocks it. Change `env.example` instead.
 
 ## Conventions
