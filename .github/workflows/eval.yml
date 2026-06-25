@@ -20,4 +20,7 @@ jobs:
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
-          LANGSMITH_TRACING: "true"
+          LANGSMITH_TRACING: ${{ vars.LANGSMITH_TRACING }}
+          LANGSMITH_PROJECT: ${{ vars.LANGSMITH_PROJECT }}
+          LANGSMITH_SEND_CONTENT: ${{ vars.LANGSMITH_SEND_CONTENT || "true" }}
+          LANGSMITH_SEND_METADATA: ${{ vars.LANGSMITH_SEND_METADATA || "true" }}

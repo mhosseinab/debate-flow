@@ -32,3 +32,6 @@ export const setApiKey = (key: string): void => {
 };
 
 export const hasApiKey = (): boolean => Boolean(storedKey() || devEnvKey());
+
+/** For pre-filling editable UI fields with the currently resolved key. */
+export const getInitialApiKeyValue = (): string => storedKey() || devEnvKey() || "";

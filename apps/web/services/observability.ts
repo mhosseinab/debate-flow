@@ -1,23 +1,36 @@
 import { createLangSmithTracer } from "@debateflow/core";
 import type { BaseCallbackHandler } from "@langchain/core/callbacks/base";
 
-// BYOK LangSmith credentials, held in memory for the session only (like the LLM key,
-// never persisted). When set, debate runs are traced to the user's own LangSmith
-// project, where they can attach online evaluators (Run Rules) for production eval.
 interface LangSmithRuntime {
-  apiKey: string;
-  project?: string;
+    apiKey: string;
+    project?: string;
+    endpoint?: string;
 }
 
 let langSmith: LangSmithRuntime | null = null;
 
-export const setLangSmith = (apiKey: string, project?: string): void => {
-  const trimmed = apiKey.trim();
-  langSmith = trimmed ? { apiKey: trimmed, project: project?.trim() || undefined } : null;
+export interface LangSmithConfig {
+    tracing: boolean;
+    apiKey: string;
+    project?: string;
+    endpoint?: string;
+}
+
+export const setLangSmith = (config: LangSmithConfig): void => {
+    const apiKey = config.apiKey.trim();
+    if (!config.tracing || !apiKey) {
+        langSmith = null;
+        return;
+    }
+    langSmith = {
+        apiKey,
+        project: config.project?.trim() || undefined,
+        endpoint: config.endpoint?.trim() || undefined,
+    };
 };
 
 export const isTracingEnabled = (): boolean => langSmith !== null;
 
 /** Build a LangSmith tracer callback if BYOK tracing is configured, else null. */
 export const buildTracer = (): BaseCallbackHandler | null =>
-  langSmith ? createLangSmithTracer(langSmith) : null;
+    langSmith ? createLangSmithTracer(langSmith) : null;

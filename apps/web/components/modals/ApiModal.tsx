@@ -1,18 +1,33 @@
 
 import React, { useState } from 'react';
 import { Key } from 'lucide-react';
+import { getLangSmithSettings } from '../../services/langsmithSettings';
 
 export interface ApiCredentials {
     apiKey: string;
-    langsmithKey?: string;
-    langsmithProject?: string;
+    langsmith: {
+        tracing: boolean;
+        endpoint: string;
+        apiKey: string;
+        project: string;
+    };
 }
 
-export const ApiModal = ({ onSave }: { onSave: (creds: ApiCredentials) => void }) => {
-    const [val, setVal] = useState("");
-    const [showTracing, setShowTracing] = useState(false);
-    const [lsKey, setLsKey] = useState("");
-    const [lsProject, setLsProject] = useState("");
+interface ApiModalProps {
+    onSave: (creds: ApiCredentials) => void;
+    onClose?: () => void;
+    initialApiKey?: string;
+    canClose?: boolean;
+}
+
+export const ApiModal = ({ onSave, onClose, initialApiKey = "", canClose = false }: ApiModalProps) => {
+    const defaults = getLangSmithSettings();
+    const [val, setVal] = useState(initialApiKey);
+    const [showTracing, setShowTracing] = useState(true);
+    const [tracing, setTracing] = useState(defaults.tracing);
+    const [endpoint, setEndpoint] = useState(defaults.endpoint);
+    const [lsKey, setLsKey] = useState(defaults.apiKey);
+    const [lsProject, setLsProject] = useState(defaults.project);
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-sm p-4">
@@ -39,18 +54,34 @@ export const ApiModal = ({ onSave }: { onSave: (creds: ApiCredentials) => void }
 
                 {showTracing && (
                     <div className="space-y-2 text-left">
+                        <label className="flex items-center gap-2 text-xs text-[#aaa] cursor-pointer">
+                            <input
+                                type="checkbox"
+                                checked={tracing}
+                                onChange={e => setTracing(e.target.checked)}
+                                className="accent-[#D0F224]"
+                            />
+                            Enable LangSmith tracing
+                        </label>
+                        <input
+                            type="text"
+                            value={endpoint}
+                            onChange={e => setEndpoint(e.target.value)}
+                            placeholder="LangSmith endpoint"
+                            className="w-full bg-black border border-[#333] rounded p-2 text-white text-sm focus:border-[#D0F224] outline-none"
+                        />
                         <input
                             type="password"
                             value={lsKey}
                             onChange={e => setLsKey(e.target.value)}
-                            placeholder="LangSmith API Key"
+                            placeholder="LangSmith API Key (lsv2_...)"
                             className="w-full bg-black border border-[#333] rounded p-2 text-white text-sm focus:border-[#D0F224] outline-none"
                         />
                         <input
                             type="text"
                             value={lsProject}
                             onChange={e => setLsProject(e.target.value)}
-                            placeholder="LangSmith Project (optional)"
+                            placeholder="LangSmith project"
                             className="w-full bg-black border border-[#333] rounded p-2 text-white text-sm focus:border-[#D0F224] outline-none"
                         />
                         <p className="text-[10px] text-[#555] leading-relaxed">
@@ -61,12 +92,24 @@ export const ApiModal = ({ onSave }: { onSave: (creds: ApiCredentials) => void }
                 )}
 
                 <button
-                    onClick={() => onSave({ apiKey: val, langsmithKey: lsKey || undefined, langsmithProject: lsProject || undefined })}
+                    onClick={() => onSave({
+                        apiKey: val,
+                        langsmith: { tracing, endpoint, apiKey: lsKey, project: lsProject },
+                    })}
                     disabled={!val}
                     className="w-full py-2 bg-[#D0F224] text-black font-bold rounded uppercase text-xs hover:bg-[#c0e020] disabled:opacity-50"
                 >
                     Start Studio
                 </button>
+                {canClose && onClose && (
+                    <button
+                        type="button"
+                        onClick={onClose}
+                        className="w-full py-2 border border-[#333] text-[#aaa] font-bold rounded uppercase text-xs hover:text-white hover:border-[#555]"
+                    >
+                        Cancel
+                    </button>
+                )}
             </div>
         </div>
     );

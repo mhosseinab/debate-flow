@@ -1,10 +1,10 @@
 
-import React, { useState } from 'react';
-import { Radio, FileText, Settings2, Sparkles, Bug } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Radio, FileText, Settings2, Sparkles, Bug, Key } from 'lucide-react';
 import { DEFAULT_CONFIG } from './constants';
 import { generateDebateStream } from './services/gemini';
-import { setLangSmith } from './services/observability';
-import { setApiKey, hasApiKey } from './services/apiKey';
+import { applyLangSmithSettings, setLangSmithSettings } from './services/langsmithSettings';
+import { setApiKey, hasApiKey, getInitialApiKeyValue } from './services/apiKey';
 import { useLocalStorage } from './hooks/useLocalStorage';
 import { useLogger } from './hooks/useLogger';
 import { PodcastConfig } from "@debateflow/core";
@@ -26,6 +26,9 @@ const App: React.FC = () => {
   
   const [config, setConfig] = useLocalStorage<PodcastConfig>('df_config', DEFAULT_CONFIG);
   const { logs, log } = useLogger();
+  const hasExistingCredentials = hasApiKey();
+
+  useEffect(() => { applyLangSmithSettings(); }, []);
 
   const generate = async () => {
       setLoading(true); setTranscript(""); setError(null);
@@ -43,9 +46,13 @@ const App: React.FC = () => {
 
   return (
     <div className="h-screen flex flex-col bg-black text-white font-sans selection:bg-[#D0F224] selection:text-black overflow-hidden">
-      {showKeyModal && <ApiModal onSave={({ apiKey, langsmithKey, langsmithProject }) => {
-          setApiKey(apiKey); // persisted in the browser (localStorage); asked once
-          if (langsmithKey) setLangSmith(langsmithKey, langsmithProject);
+      {showKeyModal && <ApiModal
+        initialApiKey={getInitialApiKeyValue()}
+        canClose={hasExistingCredentials}
+        onClose={() => setShowKeyModal(false)}
+        onSave={({ apiKey, langsmith }) => {
+          setApiKey(apiKey);
+          setLangSmithSettings(langsmith);
           setShowKeyModal(false);
       }} />}
       {showDebug && <DebugModal logs={logs} onClose={() => setShowDebug(false)} />}
@@ -56,6 +63,9 @@ const App: React.FC = () => {
             <span className="font-bold text-sm tracking-tight">DebateFlow</span>
         </div>
         <div className="flex items-center gap-3">
+             <Button variant="ghost" onClick={() => setShowKeyModal(true)} className="p-1.5" title="API & LangSmith settings">
+                 <Key className="w-4 h-4" />
+             </Button>
              <Button variant="ghost" onClick={() => setShowDebug(true)} className="p-1.5" title="Debug Prompts">
                  <Bug className="w-4 h-4" />
              </Button>
