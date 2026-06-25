@@ -1,0 +1,13 @@
+# Cloudflare Pages security headers (applied to the deployed static site only —
+# not the Vite dev server, which needs inline/eval for HMR).
+#
+# script-src 'self' is the key control: after dropping the Tailwind CDN + importmap,
+# the only executable code is the self-hosted bundle, so a CDN compromise or injected
+# inline script can no longer run and read the BYOK key from localStorage.
+# connect-src is scoped to the providers the app talks to (Gemini + LangSmith,
+# incl. regional subdomains); a fully custom LangSmith endpoint on another domain
+# would need an entry added here.
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://generativelanguage.googleapis.com https://*.smith.langchain.com; media-src 'self' blob:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
