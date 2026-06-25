@@ -1,119 +1,183 @@
 # DebateFlow
 
-Transform any source text into professional podcast scripts with AI-powered dialogue generation and multi-speaker audio synthesis using Google's Gemini AI.
+Transform any source text into a paced, two-speaker podcast debate transcript — then render
+it to multi-speaker audio. The generation pipeline is a **LangGraph** graph with input/output
+**guards**; LLMs are reached through a provider-agnostic **seam**; runs can be traced to
+**LangSmith** for offline and production **evals**. Runs fully client-side, **BYOK**
+(bring-your-own-key), and deploys static to **Cloudflare Pages**.
 
 ## Features
 
-- **AI Script Generation**: Convert articles, essays, or notes into natural podcast dialogues
-- **Multi-Speaker Support**: Configure host and guest with distinct voices (Puck, Charon, Kore, Fenrir, Zephyr)
-- **Real-Time Streaming**: Watch scripts generate live as the AI processes your input
-- **Audio Synthesis**: Generate high-quality multi-speaker audio using Google TTS
-- **Customizable Production**: Control duration (5-60 min), tone, pacing, language, and more
-- **Advanced Options**: Show notes, viral clip scripts, critical analysis mode, custom prompts
-- **Debug Tools**: Inspect AI prompts and responses for transparency
+- **AI script generation** — convert articles, essays, or notes into natural podcast dialogue
+- **Provider-agnostic** — swap the LLM (Gemini, OpenAI, …) by config, not code, via the seam
+- **Guarded pipeline** — input validation + output format/safety checks with a bounded repair retry
+- **Real-time streaming** — watch the transcript generate live
+- **Multi-speaker audio** — Gemini multi-speaker TTS (Puck, Charon, Kore, Fenrir, Zephyr)
+- **Evals** — four scored dimensions, offline suite + online (production) evaluators in LangSmith
+- **Customizable** — duration (5–60 min), tone, pacing, language, balance, show notes, and more
 
-## Prerequisites
+## Architecture
 
-- Node.js 18+ (recommended: 20+)
-- Google Gemini API Key ([Get one here](https://makersuite.google.com/app/apikey))
+### Modularity (package & module boundaries)
 
-## Setup
+```mermaid
+flowchart TB
+  subgraph web["apps/web — React SPA (UI only)"]
+    App[App.tsx]
+    Svc["services/gemini.ts<br/>orchestration"]
+    Obs["services/observability.ts<br/>BYOK LangSmith store"]
+    UI[components / hooks]
+    App --> Svc
+    App --> UI
+    Svc --> Obs
+  end
 
-1. **Clone and install**
-   ```bash
-   git clone <repository-url>
-   cd debate-flow
-   npm install
-   ```
+  subgraph core["@debateflow/core — framework-agnostic"]
+    Seam["providers/ — THE SEAM<br/>createChatModel · TTSProvider"]
+    Graph["graph/ — LangGraph StateGraph"]
+    Guards["guards/ — input · output (zod)"]
+    Prompts[prompts.ts · lib/ · types.ts]
+    Tracer["observability/ — LangSmith tracer"]
+    Evals["evals/ — evaluators · judge · runEval"]
+    Graph --> Seam
+    Graph --> Guards
+    Graph --> Prompts
+    Evals --> Seam
+    Evals --> Guards
+  end
 
-2. **Configure API key**
-   
-   Create a `.env` file in the root:
-   ```env
-   GEMINI_API_KEY=your_api_key_here
-   ```
-   
-   Or enter it through the API modal on first launch.
+  subgraph ext["External (BYOK)"]
+    LLM[(LLM provider<br/>Gemini / OpenAI)]
+    LS[(LangSmith)]
+  end
 
-3. **Start development server**
-   ```bash
-   npm run dev
-   ```
-   
-   Open `http://localhost:3000`
+  Svc --> Graph
+  Svc --> Seam
+  Obs --> Tracer
+  Seam --> LLM
+  Tracer --> LS
+  EvalScript["node: pnpm eval"] --> Evals
+  Evals --> LS
 
-## Usage
-
-### Basic Workflow
-
-1. **Input Source Text**: Paste your content in the Source tab (minimum 10 words)
-2. **Configure Settings** (optional): Switch to Config tab to customize:
-   - Podcast name, duration (5/15/30/45/60 min)
-   - Tone (Neutral, Heated Debate, Casual, NPR Style, etc.)
-   - Speakers (names, genders, voices)
-   - Language, pacing, balance, and more
-3. **Generate Script**: Click "Generate Episode" and watch it stream in real-time
-4. **Generate Audio**: Click the microphone icon to synthesize audio (processes in chunks)
-
-### Advanced Features
-
-- **Show Notes**: Enable to auto-generate episode title, summary, and takeaways
-- **Viral Clip**: Generate a 60-second standalone hook script for social media
-- **Critical Analysis**: Have AI identify logical fallacies and gaps in source material
-- **Custom Prompts**: Override default behavior with custom instructions
-- **Debug Mode**: Click bug icon to view all AI prompts and responses
-
-## Configuration
-
-### Voice Profiles
-
-| Name   | Gender | Description           |
-|--------|--------|-----------------------|
-| Puck   | Male   | Deep, rough           |
-| Charon | Male   | Deep, authoritative   |
-| Kore   | Female | Soft, calm            |
-| Fenrir | Male   | High energy           |
-| Zephyr | Female | Balanced, clear       |
-
-### Supported Languages
-
-English, Spanish, French, German, Portuguese, Japanese, Persian
-
-## Project Structure
-
-```
-debate-flow/
-├── components/       # React components (UI, modals, viewers)
-├── hooks/           # Custom hooks (localStorage, logger)
-├── lib/             # Utilities (audio, text processing)
-├── services/        # AI integration (Gemini, prompts)
-├── App.tsx          # Main application
-└── types.ts         # TypeScript definitions
+  classDef pkg fill:#0a0a0a,stroke:#D0F224,color:#fff;
+  class web,core,ext pkg;
 ```
 
-## Tech Stack
+The web app depends only on `@debateflow/core`; nothing outside `providers/` imports a concrete
+model SDK. `core` is consumed as source — `exports` maps `.` → `src/index.ts` and `./evals` →
+`src/evals/index.ts`, keeping the Node-only `langsmith` eval glue out of the browser bundle.
 
-- **Frontend**: React 19, TypeScript, Vite, Tailwind CSS
-- **AI**: Google Gemini 2.5 Flash (text), Gemini 2.5 Flash TTS (audio)
-- **Orchestration**: LangChain
-- **Icons**: Lucide React
+### Data flow (debate generation)
 
-## Scripts
+```mermaid
+flowchart LR
+  U[User: source + config] --> A[App.tsx]
+  A --> G["generateDebateStream()"]
+  G --> R["runDebateGraph()"]
 
-- `npm run dev` - Start development server
-- `npm run build` - Build for production
-- `npm run preview` - Preview production build
+  subgraph graph["LangGraph StateGraph (browser)"]
+    IG{inputGuard} -->|ok| GT[generateTranscript]
+    IG -->|fail| EX[(abort → error)]
+    GT --> OG{outputGuard}
+    OG -->|ok| EN[(END)]
+    OG -->|fail, repairs left| RP[repair] --> GT
+    OG -->|fail, exhausted| EN
+  end
+
+  R --> IG
+  GT -->|createChatModel cfg| SEAM[Provider seam]
+  SEAM --> P[(LLM provider)]
+  GT -->|onToken stream| A
+  R -.callbacks: logger + tracer.-> LSM[(LangSmith)]
+  EN --> T[Transcript in UI]
+  T --> AUD["generatePodcastAudio()"] --> TTS[TTSProvider seam] --> WAV[AudioBuffer → WAV]
+```
+
+`onToken` streams tokens to the UI live; a guard-triggered repair calls `onReset` so the UI
+clears before re-streaming. Top-level graph callbacks (logger + optional LangSmith tracer)
+propagate to the model run.
+
+## Quick start
+
+```bash
+# Prereqs: Node 20+ and pnpm 9+
+pnpm install
+pnpm dev          # http://localhost:3000
+```
+
+On first launch, paste your **LLM provider API key** in the modal (BYOK; held in memory for the
+session). Optionally expand **Production tracing** to add a LangSmith key + project. For local
+dev you may instead put `GEMINI_API_KEY=...` in a root `.env` (do **not** ship a build made with
+that env set — it bakes the key into the static bundle).
+
+## Commands (run from repo root)
+
+| Command | What |
+|---|---|
+| `pnpm dev` | Vite dev server (port 3000) |
+| `pnpm build` | Build the web app → `apps/web/dist` |
+| `pnpm preview` | Preview the production build |
+| `pnpm typecheck` | `tsc --noEmit` across packages (also run by the Stop hook) |
+| `pnpm test` | Vitest unit tests (seam, graph, guards, evaluators) |
+| `pnpm eval` | Offline eval suite (needs `GEMINI_API_KEY` + `LANGSMITH_API_KEY`) |
+
+## Evals
+
+Four quality dimensions, defined once and reused by the offline suite and online Run Rules:
+**faithfulness**, **format & tag compliance**, **config adherence**, **safety**. See
+[`docs/EVALS.md`](docs/EVALS.md) for the offline run and how to wire production (online)
+evaluators in your own LangSmith project.
+
+## Project structure
+
+```
+apps/web/                 # React 19 + Vite SPA (UI only)
+  services/               #   gemini.ts (orchestration), observability.ts (BYOK tracing)
+  components/ hooks/ constants.ts
+packages/core/            # @debateflow/core — no React, no concrete SDK outside the seam
+  src/providers/          #   the seam: createChatModel (registry) + TTSProvider
+  src/graph/              #   LangGraph StateGraph + state
+  src/guards/             #   input/output guards (zod)
+  src/evals/              #   evaluators, judge, seed dataset, runEval.ts
+  src/observability/      #   LangSmith tracer
+  src/prompts.ts src/lib/ src/types.ts
+packages/config/          # shared tsconfig base
+wrangler.toml             # Cloudflare Pages (static, apps/web/dist)
+.github/workflows/        # ci.yml · deploy.yml · eval.yml
+```
+
+## Tech stack
+
+- **Frontend**: React 19, TypeScript, Vite, Tailwind (CDN)
+- **Orchestration**: LangGraph (`@langchain/langgraph/web`) + LangChain core
+- **Models**: provider-agnostic seam (Gemini 2.5 Flash, OpenAI, …) + Gemini multi-speaker TTS
+- **Evals/Observability**: LangSmith (`evaluate()` offline + Run Rules online)
+- **Validation/Tests**: zod, Vitest
+- **Tooling**: pnpm workspaces; **Cloudflare Pages** static hosting
+
+## Voice profiles & languages
+
+| Name | Gender | Description |
+|---|---|---|
+| Puck | Male | Deep, rough |
+| Charon | Male | Deep, authoritative |
+| Kore | Female | Soft, calm |
+| Fenrir | Male | High energy |
+| Zephyr | Female | Balanced, clear |
+
+Languages: English, Spanish, French, German, Portuguese, Japanese, Persian.
+
+## Deployment (Cloudflare Pages)
+
+Static SPA — no Pages Functions. Build output `apps/web/dist`, SPA fallback via
+`apps/web/public/_redirects`. CI (`.github/workflows/deploy.yml`) deploys on push to `main`
+using `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` repo secrets.
 
 ## Notes
 
-- API key can be set via `.env` file or runtime modal
-- Audio generation processes in chunks and may take several minutes for longer scripts
-- Requires modern browser with Web Audio API support
-- All AI operations require active internet connection
-
-## Troubleshooting
-
-- **API Key Missing**: Set `GEMINI_API_KEY` in `.env` or use the API modal
-- **Audio Generation Fails**: Try shorter scripts or different tone settings
-- **Script Not Generating**: Check browser console for errors, verify API key is valid
-- **Debug Issues**: Use the debug modal (bug icon) to inspect prompts and responses
+- BYOK: keys are entered at runtime and held in memory only (not persisted).
+- Audio synthesis processes in chunks and may take a while for longer scripts; needs a browser
+  with Web Audio API.
+- All AI operations require an internet connection and a valid provider key.
+```
+```
