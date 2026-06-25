@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { BaseCallbackHandler } from "@langchain/core/callbacks/base";
 import { runDebateGraph } from "./debateGraph";
 import { sampleConfig } from "../test/fixtures";
 
@@ -29,6 +30,26 @@ describe("debate graph wiring", () => {
 
     expect(tokens).toEqual(["**[Alex]** Hello ", "world"]);
     expect(transcript).toBe("**[Alex]** Hello world");
+  });
+
+  it("never exposes the BYOK apiKey to callbacks/tracers", async () => {
+    // The LangSmith tracer serializes run inputs; the BYOK key must never reach it.
+    // Capture every chain-start input the callbacks see and assert the key is absent.
+    const seen: unknown[] = [];
+    class InputCapturingHandler extends BaseCallbackHandler {
+      name = "InputCapturingHandler";
+      async handleChainStart(_chain: unknown, inputs: unknown) {
+        seen.push(inputs);
+      }
+    }
+
+    await runDebateGraph(
+      { inputScript: "Some source article about energy.", config: sampleConfig, apiKey: "super-secret-key" },
+      { callbacks: [new InputCapturingHandler()] },
+      { createChatModel: fakeModelFactory(["**[Alex]** Hi.\n\n**[Sarah]** Hello."]) },
+    );
+
+    expect(JSON.stringify(seen)).not.toContain("super-secret-key");
   });
 
   it("aborts when the input guard fails (empty source)", async () => {

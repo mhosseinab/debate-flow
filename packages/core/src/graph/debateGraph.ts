@@ -54,7 +54,9 @@ export function buildDebateGraph(deps: DebateGraphDeps = {}) {
     const { onToken, onReset } = (config?.configurable ?? {}) as Configurable;
     onReset?.();
 
-    const model = await createModel({ ...state.config.llm, apiKey: state.apiKey });
+    // The BYOK apiKey is injected by the closure-bound factory (see runDebateGraph),
+    // never read from graph state — it must never reach the tracer.
+    const model = await createModel(state.config.llm);
 
     let system = await buildSystemPrompt(state.config);
     if (state.repairAttempts > 0 && state.guard) {
@@ -112,8 +114,15 @@ export async function runDebateGraph(
   options: RunDebateOptions = {},
   deps?: DebateGraphDeps,
 ): Promise<{ transcript: string; guard?: GuardResult; error?: string }> {
-  const graph = buildDebateGraph(deps);
-  const result = await graph.invoke(input, {
+  const { apiKey, ...graphInput } = input;
+  // Bind the BYOK key in a closure so it never enters graph state. Graph inputs are
+  // serialized by the LangSmith tracer; routing the key through state would post it
+  // to LangSmith in plaintext. The model factory receives it out-of-band instead.
+  const baseCreate = deps?.createChatModel ?? defaultCreateChatModel;
+  const createChatModel = (cfg: ProviderConfig) => baseCreate({ ...cfg, apiKey });
+
+  const graph = buildDebateGraph({ createChatModel });
+  const result = await graph.invoke(graphInput, {
     // Top-level callbacks trace the whole graph run and propagate to the model.
     callbacks: options.callbacks,
     configurable: {

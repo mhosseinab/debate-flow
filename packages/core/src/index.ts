@@ -6,6 +6,7 @@ export * from "./lib/utils";
 export * from "./lib/audioUtils";
 export * from "./providers";
 export * from "./guards";
+export * from "./observability/client";
 export * from "./observability/tracer";
 export * from "./graph/state";
 export * from "./graph/debateGraph";

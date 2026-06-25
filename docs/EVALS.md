@@ -25,6 +25,7 @@ records a LangSmith experiment.
 export GEMINI_API_KEY=...        # target generation + judge
 export LANGSMITH_API_KEY=...     # records the experiment
 export LANGSMITH_TRACING=true
+# Optional: LANGSMITH_ENDPOINT (defaults to EU), LANGSMITH_WORKSPACE_ID (org keys)
 pnpm --filter @debateflow/core eval
 ```
 

@@ -4,12 +4,13 @@ import type { GuardResult } from "../guards/types";
 
 const replace = <T>() => ({ reducer: (_prev: T, next: T) => next });
 
-// Debate graph state. inputScript/config/apiKey are runtime inputs; the rest are
-// produced by nodes. apiKey is transient (BYOK) and never persisted.
+// Debate graph state. inputScript/config are runtime inputs; the rest are produced
+// by nodes. The BYOK apiKey is deliberately NOT a state channel: graph inputs are
+// serialized by the LangSmith tracer, so the key is bound via closure in
+// runDebateGraph (see debateGraph.ts) and never enters traced state.
 export const DebateState = Annotation.Root({
   inputScript: Annotation<string>(),
   config: Annotation<PodcastConfig>(),
-  apiKey: Annotation<string>(),
   transcript: Annotation<string>({ ...replace<string>(), default: () => "" }),
   guard: Annotation<GuardResult | undefined>({
     ...replace<GuardResult | undefined>(),

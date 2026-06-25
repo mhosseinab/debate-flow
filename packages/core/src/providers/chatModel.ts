@@ -1,47 +1,31 @@
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
-import type { ProviderConfig } from "./types";
+import type { ProviderConfig, ChatProviderId } from "./types";
+import type { ChatProvider } from "./chat/ChatProvider";
+import { GoogleGenAIProvider } from "./chat/GoogleGenAIProvider";
+import { OpenAIProvider } from "./chat/OpenAIProvider";
+import { DeepSeekProvider } from "./chat/DeepSeekProvider";
 
-// The chat seam. Each entry lazily imports only its own provider package, so the
-// bundle pulls in exactly the providers registered here (unlike a universal
-// initChatModel switch that references every provider). Add a provider by adding
-// one entry + installing its package — no downstream changes.
-type ChatModelLoader = (cfg: ProviderConfig) => Promise<BaseChatModel>;
+// The chat seam's registry + factory. Each provider lives in its own class under
+// ./chat (Strategy pattern); this file maps id → instance and exposes the two
+// public entry points. Add a provider by adding its class + one entry here.
+export type { ChatProvider } from "./chat/ChatProvider";
 
-const LOADERS: Record<string, ChatModelLoader> = {
-  "google-genai": async (cfg) => {
-    const { ChatGoogleGenerativeAI } = await import("@langchain/google-genai");
-    return new ChatGoogleGenerativeAI({
-      model: cfg.model,
-      apiKey: cfg.apiKey,
-      temperature: cfg.temperature,
-      maxOutputTokens: cfg.maxOutputTokens,
-      maxRetries: cfg.maxRetries,
-    });
-  },
-  openai: async (cfg) => {
-    const { ChatOpenAI } = await import("@langchain/openai");
-    return new ChatOpenAI({
-      model: cfg.model,
-      apiKey: cfg.apiKey,
-      temperature: cfg.temperature,
-      maxTokens: cfg.maxOutputTokens,
-      maxRetries: cfg.maxRetries,
-    });
-  },
-};
+const REGISTRY: ReadonlyMap<ChatProviderId, ChatProvider> = new Map(
+  [new GoogleGenAIProvider(), new OpenAIProvider(), new DeepSeekProvider()].map(
+    (p) => [p.id, p],
+  ),
+);
 
 export async function createChatModel(cfg: ProviderConfig): Promise<BaseChatModel> {
-  const loader = LOADERS[cfg.provider];
-  if (!loader) {
+  const provider = REGISTRY.get(cfg.provider);
+  if (!provider) {
     throw new Error(
       `Unsupported chat provider: "${cfg.provider}". Known providers: ${listChatProviders().join(", ")}`,
     );
   }
-  return loader(cfg);
+  return provider.create(cfg);
 }
 
-export function listChatProviders(): ChatProviderName[] {
-  return Object.keys(LOADERS) as ChatProviderName[];
+export function listChatProviders(): ChatProviderId[] {
+  return [...REGISTRY.keys()];
 }
-
-type ChatProviderName = keyof typeof LOADERS;

@@ -4,13 +4,19 @@
 // changes to the graph, prompts, or UI.
 
 /** Chat (text-generation) providers the registry knows how to construct. */
-export type ChatProviderId = "google-genai" | "openai";
+export type ChatProviderId = "google-genai" | "openai" | "deepseek";
 
 export interface ProviderConfig {
   provider: ChatProviderId;
   model: string;
   /** BYOK: supplied at runtime by the user. */
   apiKey?: string;
+  /**
+   * Custom OpenAI-compatible endpoint. Lets the `openai` provider target a custom
+   * endpoint URL (proxy, gateway, self-hosted), and overrides the `deepseek`
+   * provider's default endpoint. Ignored by `google-genai`.
+   */
+  baseURL?: string;
   temperature?: number;
   maxOutputTokens?: number;
   maxRetries?: number;

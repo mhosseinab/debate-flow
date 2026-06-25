@@ -60,7 +60,14 @@ imported. Guards + repair live in the graph; tracing/evals reuse the same seam.
   `onToken` callback; repair re-runs call `onReset` so the UI clears first.
 - **Vitest** for unit tests (seam, graph, guards, evaluators). **zod** for the output
   speaker-tag schema.
-- Tailwind via CDN (`index.html`). Accent color `#D0F224`.
+- **Tailwind v4** built at compile time via `@tailwindcss/vite` (plugin in
+  `vite.config.ts`; `@import "tailwindcss"` + theme tokens in `apps/web/index.css`,
+  imported from `index.tsx`). No runtime CDN — keeps `script-src 'self'` enforceable.
+  Accent color `#D0F224` (used as arbitrary values, e.g. `bg-[#D0F224]`).
+- **CSP / security headers** ship via `apps/web/public/_headers` (Cloudflare Pages),
+  not a `<meta>` tag, so the Vite dev server (needs inline/eval for HMR) is unaffected.
+  `script-src 'self'`; `connect-src` is scoped to Gemini + LangSmith — a custom
+  LangSmith endpoint on another domain needs an entry added there.
 
 ## Commands (run from repo root)
 
