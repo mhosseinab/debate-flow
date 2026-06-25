@@ -5,13 +5,17 @@ name: Evals
 on:
   workflow_dispatch:
 
+# Least privilege: reads the repo and consumes secrets via env; no write scope needed.
+permissions:
+  contents: read
+
 jobs:
   eval:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version: 22
           cache: pnpm
@@ -20,6 +24,11 @@ jobs:
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
+          # DebateFlow defaults to EU LangSmith in-app; mirror that in CI so
+          # workspace-scoped keys don't 403 against the US endpoint.
+          LANGSMITH_ENDPOINT: ${{ vars.LANGSMITH_ENDPOINT || 'https://eu.api.smith.langchain.com' }}
+          # Optional, but required for some org/workspace-scoped key setups.
+          LANGSMITH_WORKSPACE_ID: ${{ vars.LANGSMITH_WORKSPACE_ID }}
           LANGSMITH_TRACING: ${{ vars.LANGSMITH_TRACING }}
           LANGSMITH_PROJECT: ${{ vars.LANGSMITH_PROJECT }}
           LANGSMITH_SEND_CONTENT: ${{ vars.LANGSMITH_SEND_CONTENT || 'true' }}

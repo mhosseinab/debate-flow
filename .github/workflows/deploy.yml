@@ -11,13 +11,21 @@ concurrency:
   group: deploy-${{ github.ref }}
   cancel-in-progress: true
 
+# Least privilege: the deploy authenticates to Cloudflare with its own API token,
+# so GITHUB_TOKEN needs only read access to check out the source.
+permissions:
+  contents: read
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    # Gate prod deploys behind a GitHub Environment. Add required-reviewer protection
+    # rules to the "production" environment in repo Settings to enforce approval.
+    environment: production
     steps:
-      - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version: 22
           cache: pnpm
@@ -26,7 +34,7 @@ jobs:
         env:
           # Safety rail: never allow a real key to be inlined in deploy builds.
           VITE_GEMINI_API_KEY: __DEPLOY_DUMMY_KEY_DO_NOT_USE__
-      - uses: cloudflare/wrangler-action@v4
+      - uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
